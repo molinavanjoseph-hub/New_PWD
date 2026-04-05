@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+  <title>Bank System</title>
+
+  <style>
+    body {
+      font-family: Arial;
+      background: linear-gradient(to right, #0f9b0f, #00c853);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    .container {
+      background: white;
+      padding: 25px;
+      border-radius: 15px;
+      width: 320px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+      text-align: center;
+    }
+
+    h2 {
+      color: #0f9b0f;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 10px;
+      margin: 6px 0;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #0f9b0f;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0c7a0c;
+    }
+
+    .panel {
+      display: none;
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 10px;
+    }
+
+    .admin {
+      background: #e3f2fd;
+      color: #0d47a1;
+    }
+
+    .user {
+      background: #f1f8e9;
+      color: #33691e;
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+<div class="container">
+
+  <h2>🏦 Register</h2>
+
+  <input type="text" id="regUser" placeholder="Username">
+  <input type="password" id="regPass" placeholder="Password">
+
+  <select id="regRole">
+    <option value="user">User</option>
+    <option value="admin">Admin</option>
+  </select>
+
+<button onclick="register()">Create Account</button>
+
+  <hr>
+
+  <h2>Login</h2>
+
+  <input type="text" id="loginUser" placeholder="Username">
+  <input type="password" id="loginPass" placeholder="Password">
+
+<button onclick="login()">Login</button>
+
+  <p id="result"></p>
+
+  <div id="adminPanel" class="panel admin">
+    <h3>👑 Admin Panel</h3>
+    <p>✔ Manage Users</p>
+    <p>✔ View Reports</p>
+  </div>
+
+  <div id="userPanel" class="panel user">
+    <h3>👤 User Panel</h3>
+    <p>✔ View Balance</p>
+    <p>✔ Send Money</p>
+  </div>
+
+</div>
+
+<script>
+
+var users = [];
+
+function register() {
+  var user = document.getElementById("regUser").value;
+  var pass = document.getElementById("regPass").value;
+  var role = document.getElementById("regRole").value;
+
+  if(user == "" || pass == "") {
+    alert("Fill all fields!");
+    return;
+  }
+
+  users.push({username: user, password: pass, role: role});
+  alert("✅ Account Created!");
+}
+
+function login() {
+  var userInput = document.getElementById("loginUser").value;
+  var passInput = document.getElementById("loginPass").value;
+
+  var foundUser = null;
+
+  for(var i = 0; i < users.length; i++) {
+    if(users[i].username == userInput && users[i].password == passInput) {
+      foundUser = users[i];
+      break;
+    }
+  }
+
+  if(foundUser) {
+    document.getElementById("result").innerHTML = "✅ Welcome " + foundUser.username;
+
+    if(foundUser.role == "admin") {
+      document.getElementById("adminPanel").style.display = "block";
+      document.getElementById("userPanel").style.display = "none";
+    } else {
+      document.getElementById("userPanel").style.display = "block";
+      document.getElementById("adminPanel").style.display = "none";
+    }
+
+  } else {
+    document.getElementById("result").innerHTML = "❌ Invalid Account";
+  }
+}
+
+</script>
+
+</body>
+</html>

@@ -1,0 +1,466 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasVerifiedRegistration(email, role, organizationType) {
+      return email is string
+        && role is string
+        && exists(/databases/$(database)/documents/employer_registration/$(email))
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.email == email
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.role == role
+        && (
+          role == 'applicant'
+          || (
+            role == 'employer'
+            && organizationType is string
+            && get(/databases/$(database)/documents/employer_registration/$(email)).data.organizationType == organizationType
+          )
+        )
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.verifiedAt != null
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.expiresAt > request.time;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'system_admin'
+        );
+    }
+
+    function isApplicationApplicant() {
+      return signedIn()
+        && (
+          resource.data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && resource.data.applicant_email == request.auth.token.email
+          )
+        );
+    }
+
+    function isApplicationWorkspaceOwner() {
+      return signedIn() && resource.data.workspace_owner_id == request.auth.uid;
+    }
+
+    function isOwnApplicantApplicationCreate() {
+      return signedIn()
+        && request.resource.data.applicant_id == request.auth.uid
+        && request.resource.data.job_id is string
+        && request.resource.data.job_id.size() > 0
+        && request.resource.data.workspace_owner_id is string
+        && request.resource.data.workspace_owner_id.size() > 0
+        && request.resource.data.application_status == 'pending'
+        && request.resource.data.rejection_reason == '';
+    }
+
+    function hasImmutableApplicationIdentity() {
+      return request.resource.data.job_id == resource.data.job_id
+        && request.resource.data.workspace_owner_id == resource.data.workspace_owner_id
+        && request.resource.data.applicant_id == resource.data.applicant_id
+        && request.resource.data.applicant_email == resource.data.applicant_email;
+    }
+
+    function isApplicationWorkspaceOwnerUpdate() {
+      return isApplicationWorkspaceOwner()
+        && hasImmutableApplicationIdentity();
+    }
+
+    function isAssessmentApplicant() {
+      return signedIn()
+        && (
+          resource.data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && resource.data.applicant_email == request.auth.token.email
+          )
+        );
+    }
+
+    function isAssessmentWorkspaceOwner() {
+      return signedIn() && resource.data.workspace_owner_id == request.auth.uid;
+    }
+
+    function hasInterviewLinkedApplication() {
+      return resource.data.application_id is string
+        && resource.data.application_id.size() > 0
+        && exists(/databases/$(database)/documents/apply_jobs/$(resource.data.application_id));
+    }
+
+    function interviewApplicationApplicantMatches() {
+      return signedIn()
+        && hasInterviewLinkedApplication()
+        && (
+          get(/databases/$(database)/documents/apply_jobs/$(resource.data.application_id)).data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && get(/databases/$(database)/documents/apply_jobs/$(resource.data.application_id)).data.applicant_email == request.auth.token.email
+          )
+        );
+    }
+
+    function isInterviewApplicant() {
+      return signedIn()
+        && (
+          resource.data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && resource.data.applicant_email == request.auth.token.email
+          )
+          || interviewApplicationApplicantMatches()
+        );
+    }
+
+    function isInterviewWorkspaceOwner() {
+      return signedIn() && resource.data.workspace_owner_id == request.auth.uid;
+    }
+
+    function isInterviewWorkspaceOwnerCreate() {
+      return signedIn() && request.resource.data.workspace_owner_id == request.auth.uid;
+    }
+
+    function hasImmutableAssessmentAssignmentIdentity() {
+      return request.resource.data.workspace_owner_id == resource.data.workspace_owner_id
+        && request.resource.data.applicant_id == resource.data.applicant_id
+        && request.resource.data.applicant_email == resource.data.applicant_email
+        && request.resource.data.application_id == resource.data.application_id;
+    }
+
+    function hasImmutableInterviewIdentity() {
+      return request.resource.data.workspace_owner_id == resource.data.workspace_owner_id
+        && (
+          request.resource.data.workspace_owner_email == resource.data.workspace_owner_email
+          || resource.data.workspace_owner_email == null
+          || resource.data.workspace_owner_email == ''
+        )
+        && request.resource.data.application_id == resource.data.application_id
+        && request.resource.data.applicant_id == resource.data.applicant_id
+        && (
+          request.resource.data.applicant_email == resource.data.applicant_email
+          || resource.data.applicant_email == null
+          || resource.data.applicant_email == ''
+        )
+        && request.resource.data.job_id == resource.data.job_id;
+    }
+
+    function hasImmutableInterviewSchedulePayload() {
+      return request.resource.data.workspace_owner_name == resource.data.workspace_owner_name
+        && request.resource.data.applicant_name == resource.data.applicant_name
+        && request.resource.data.applicant_avatar == resource.data.applicant_avatar
+        && request.resource.data.job_title == resource.data.job_title
+        && request.resource.data.interview_type == resource.data.interview_type
+        && request.resource.data.scheduled_at == resource.data.scheduled_at
+        && request.resource.data.mode == resource.data.mode
+        && request.resource.data.location_or_link == resource.data.location_or_link
+        && request.resource.data.interviewer == resource.data.interviewer
+        && request.resource.data.notes == resource.data.notes
+        && request.resource.data.schedule_status == resource.data.schedule_status
+        && (
+          request.resource.data.available_schedule_options == resource.data.available_schedule_options
+          || resource.data.available_schedule_options == null
+          || (
+            request.resource.data.available_schedule_options is list
+            && request.resource.data.available_schedule_options.size() == 0
+          )
+        )
+        && (
+          request.resource.data.created_at == resource.data.created_at
+          || resource.data.created_at == null
+          || resource.data.created_at == ''
+        );
+    }
+
+    function isInterviewApplicantUpdate() {
+      return isInterviewApplicant()
+        && hasImmutableInterviewIdentity()
+        && hasImmutableInterviewSchedulePayload()
+        && (
+          request.resource.data.business_decision_reason == resource.data.business_decision_reason
+          || request.resource.data.business_decision_reason == ''
+        )
+        && (
+          request.resource.data.business_decided_at == resource.data.business_decided_at
+          || request.resource.data.business_decided_at == ''
+        );
+    }
+
+    function hasImmutableAssessmentAssignmentPayload() {
+      return request.resource.data.job_id == resource.data.job_id
+        && request.resource.data.job_title == resource.data.job_title
+        && request.resource.data.company_name == resource.data.company_name
+        && request.resource.data.business_name == resource.data.business_name
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.approval_date == resource.data.approval_date
+        && request.resource.data.score == resource.data.score
+        && request.resource.data.selected_template_id == resource.data.selected_template_id
+        && request.resource.data.template_title == resource.data.template_title
+        && request.resource.data.template_description == resource.data.template_description
+        && request.resource.data.template_instructions == resource.data.template_instructions
+        && request.resource.data.template_questions == resource.data.template_questions
+        && request.resource.data.passing_score_percent == resource.data.passing_score_percent
+        && request.resource.data.assigned_at == resource.data.assigned_at;
+    }
+
+    function isSelfUserBase(userId) {
+      return isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.email is string
+        && (
+          request.resource.data.role == 'applicant'
+          || request.resource.data.role == 'employer'
+        );
+    }
+
+    function isSelfUserCreate(userId) {
+      return isSelfUserBase(userId)
+        && (
+          (
+            request.resource.data.role == 'applicant'
+            && request.resource.data.email_verified == true
+            && hasVerifiedRegistration(
+              request.resource.data.email,
+              'applicant',
+              ''
+            )
+          )
+          || (
+            request.resource.data.role == 'employer'
+            && request.resource.data.company_organization_type is string
+            && request.resource.data.email_verified == true
+            && hasVerifiedRegistration(
+              request.resource.data.email,
+              'employer',
+              request.resource.data.company_organization_type
+            )
+          )
+        );
+    }
+
+    function isSelfUserUpdate(userId) {
+      return isSelfUserBase(userId)
+        && resource.data.uid == userId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.approval_status == resource.data.approval_status;
+    }
+
+    function isSelfEmployerBase(employerId) {
+      return isOwner(employerId)
+        && request.resource.data.uid == employerId
+        && request.resource.data.role == 'employer'
+        && request.resource.data.email is string;
+    }
+
+    function isSelfEmployerCreate(employerId) {
+      return isSelfEmployerBase(employerId)
+        && request.resource.data.company_organization_type is string
+        && request.resource.data.email_verified == true
+        && hasVerifiedRegistration(
+          request.resource.data.email,
+          'employer',
+          request.resource.data.company_organization_type
+        );
+    }
+
+    function isSelfEmployerUpdate(employerId) {
+      return isSelfEmployerBase(employerId)
+        && resource.data.uid == employerId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.approval_status == resource.data.approval_status;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin() || isSelfUserCreate(userId);
+      allow update: if isAdmin() || isSelfUserUpdate(userId);
+      allow delete: if isAdmin() || isOwner(userId);
+    }
+
+    match /employers/{employerId} {
+      allow get: if isOwner(employerId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin() || isSelfEmployerCreate(employerId);
+      allow update: if isAdmin() || isSelfEmployerUpdate(employerId);
+      allow delete: if isAdmin() || isOwner(employerId);
+
+      match /workspace_users/{userId} {
+        allow get, list: if isOwner(employerId) || isAdmin();
+        allow create, update: if isOwner(employerId) || isAdmin();
+        allow delete: if isOwner(employerId) || isAdmin();
+      }
+
+      match /member_employer/{memberId} {
+        allow get, list: if isOwner(employerId) || isAdmin();
+        allow create, update: if isOwner(employerId) || isAdmin();
+        allow delete: if isOwner(employerId) || isAdmin();
+      }
+    }
+
+    match /applicant_registration/{applicantId} {
+      allow get: if isOwner(applicantId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(applicantId) || isAdmin();
+      allow update: if isOwner(applicantId) || isAdmin();
+      allow delete: if isOwner(applicantId) || isAdmin();
+    }
+
+    match /deleted_user_history/{historyId} {
+      allow get, list: if isAdmin();
+      allow update: if isAdmin();
+      allow create, delete: if false;
+    }
+
+    match /activity_logs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.actor.uid == request.auth.uid
+        && request.resource.data.action is string
+        && request.resource.data.created_at is string;
+      allow update, delete: if false;
+    }
+
+    match /jobs/{jobId} {
+      allow get, list: if true;
+      allow create: if isAdmin()
+        || (signedIn() && (
+          request.resource.data.workspace_owner_id == request.auth.uid
+          || request.resource.data.created_by == request.auth.uid
+          || request.resource.data.employer_id == request.auth.uid
+        ));
+      allow update, delete: if isAdmin()
+        || (signedIn() && (
+          resource.data.workspace_owner_id == request.auth.uid
+          || resource.data.created_by == request.auth.uid
+          || resource.data.employer_id == request.auth.uid
+        ));
+    }
+
+    match /subscription_details/{planId} {
+      allow get, list: if signedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /business_payment_history/{paymentId} {
+      allow get, list: if isAdmin()
+        || (signedIn() && (
+          resource.data.workspace_owner_id == request.auth.uid
+          || resource.data.saved_by_uid == request.auth.uid
+        ));
+      allow create, update: if isAdmin()
+        || (signedIn() && (
+          request.resource.data.workspace_owner_id == request.auth.uid
+          || request.resource.data.saved_by_uid == request.auth.uid
+        ));
+      allow delete: if isAdmin();
+    }
+
+    match /applicant_score_assessment/{scoreId} {
+      allow get, list: if isAdmin()
+        || (signedIn() && (
+          resource.data.workspace_owner_id == request.auth.uid
+          || resource.data.saved_by_uid == request.auth.uid
+        ));
+      allow create, update: if isAdmin()
+        || (signedIn() && (
+          request.resource.data.workspace_owner_id == request.auth.uid
+          || request.resource.data.saved_by_uid == request.auth.uid
+        ));
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+    }
+
+    match /business_assessment_templates/{templateId} {
+      allow get, list: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+      allow create, update: if isAdmin()
+        || (signedIn() && request.resource.data.workspace_owner_id == request.auth.uid);
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+    }
+
+    match /business_training_templates/{templateId} {
+      allow get, list: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+      allow create, update: if isAdmin()
+        || (signedIn() && request.resource.data.workspace_owner_id == request.auth.uid);
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+    }
+
+    match /business_assessment_assignments/{assignmentId} {
+      allow get, list: if isAdmin()
+        || isAssessmentWorkspaceOwner()
+        || isAssessmentApplicant();
+      allow create: if isAdmin()
+        || (signedIn() && request.resource.data.workspace_owner_id == request.auth.uid);
+      allow update: if isAdmin()
+        || (
+          signedIn()
+          && hasImmutableAssessmentAssignmentIdentity()
+          && (
+            request.resource.data.workspace_owner_id == request.auth.uid
+            || (isAssessmentApplicant() && hasImmutableAssessmentAssignmentPayload())
+          )
+        );
+      allow delete: if isAdmin()
+        || isAssessmentWorkspaceOwner();
+    }
+
+    match /business_training_assignments/{assignmentId} {
+      allow get, list: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+      allow create, update: if isAdmin()
+        || (signedIn() && request.resource.data.workspace_owner_id == request.auth.uid);
+      allow delete: if isAdmin()
+        || (signedIn() && resource.data.workspace_owner_id == request.auth.uid);
+    }
+
+    match /business_interview_schedules/{scheduleId} {
+      allow get, list: if isAdmin()
+        || isInterviewWorkspaceOwner()
+        || isInterviewApplicant();
+      allow create: if isAdmin()
+        || isInterviewWorkspaceOwnerCreate();
+      allow update: if isAdmin()
+        || isInterviewWorkspaceOwner()
+        || isInterviewApplicantUpdate();
+      allow delete: if isAdmin()
+        || isInterviewWorkspaceOwner();
+    }
+
+    match /apply_jobs/{applicationId} {
+      allow get: if isAdmin()
+        || isApplicationWorkspaceOwner()
+        || isApplicationApplicant()
+        || (signedIn() && resource == null);
+      allow list: if isAdmin()
+        || isApplicationWorkspaceOwner()
+        || isApplicationApplicant();
+      allow create: if isAdmin() || isOwnApplicantApplicationCreate();
+      allow update: if isAdmin() || isApplicationWorkspaceOwnerUpdate();
+      allow delete: if isAdmin()
+        || isApplicationWorkspaceOwner()
+        || isApplicationApplicant();
+    }
+
+    match /employer_registration/{email} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

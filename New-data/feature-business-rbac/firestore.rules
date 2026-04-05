@@ -1,0 +1,229 @@
+﻿rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasVerifiedRegistration(email, role, organizationType) {
+      return email is string
+        && role is string
+        && exists(/databases/$(database)/documents/employer_registration/$(email))
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.email == email
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.role == role
+        && (
+          role == 'applicant'
+          || (
+            role == 'employer'
+            && organizationType is string
+            && get(/databases/$(database)/documents/employer_registration/$(email)).data.organizationType == organizationType
+          )
+        )
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.verifiedAt != null
+        && get(/databases/$(database)/documents/employer_registration/$(email)).data.expiresAt > request.time;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'system_admin'
+        );
+    }
+
+    function hasCurrentUserProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isBusinessWorkspaceAccount() {
+      return hasCurrentUserProfile()
+        && currentUserProfile().role == 'employer'
+        && currentUserProfile().company_organization_type == 'business';
+    }
+
+    function currentWorkspaceOwnerId() {
+      return (
+          hasCurrentUserProfile()
+          && currentUserProfile().workspace_owner_id is string
+        )
+        ? currentUserProfile().workspace_owner_id
+        : request.auth.uid;
+    }
+
+    function canReadWorkspaceUser(userId, userData) {
+      return isBusinessWorkspaceAccount()
+        && userData.role == 'employer'
+        && (
+          userId == request.auth.uid
+          || (
+            userData.workspace_owner_id is string
+            && userData.workspace_owner_id == currentWorkspaceOwnerId()
+          )
+        );
+    }
+
+    function canReadWorkspaceUserDirectory(employerId, userId, userData) {
+      return isBusinessWorkspaceAccount()
+        && employerId == currentWorkspaceOwnerId()
+        && userData.role == 'employer'
+        && (
+          userId == request.auth.uid
+          || (
+            userData.workspace_owner_id is string
+            && userData.workspace_owner_id == currentWorkspaceOwnerId()
+          )
+        );
+    }
+
+    function canManageWorkspaceJob(jobData) {
+      return isBusinessWorkspaceAccount()
+        && jobData.workspace_owner_id is string
+        && jobData.workspace_owner_id == currentWorkspaceOwnerId();
+    }
+
+    function canReadPublicJob(jobData) {
+      return jobData.status is string
+        && jobData.status == 'open';
+    }
+
+    function isSelfUserBase(userId) {
+      return isOwner(userId)
+        && request.resource.data.uid == userId
+        && request.resource.data.email is string
+        && (
+          request.resource.data.role == 'applicant'
+          || request.resource.data.role == 'employer'
+        );
+    }
+
+    function isSelfUserCreate(userId) {
+      return isSelfUserBase(userId)
+        && (
+          (
+            request.resource.data.role == 'applicant'
+            && request.resource.data.email_verified == true
+            && hasVerifiedRegistration(
+              request.resource.data.email,
+              'applicant',
+              ''
+            )
+          )
+          || (
+            request.resource.data.role == 'employer'
+            && request.resource.data.company_organization_type is string
+            && request.resource.data.email_verified == true
+            && hasVerifiedRegistration(
+              request.resource.data.email,
+              'employer',
+              request.resource.data.company_organization_type
+            )
+          )
+        );
+    }
+
+    function isSelfUserUpdate(userId) {
+      return isSelfUserBase(userId)
+        && resource.data.uid == userId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.approval_status == 'pending';
+    }
+
+    function isSelfEmployerBase(employerId) {
+      return isOwner(employerId)
+        && request.resource.data.uid == employerId
+        && request.resource.data.role == 'employer'
+        && request.resource.data.email is string;
+    }
+
+    function isSelfEmployerCreate(employerId) {
+      return isSelfEmployerBase(employerId)
+        && request.resource.data.company_organization_type is string
+        && request.resource.data.email_verified == true
+        && hasVerifiedRegistration(
+          request.resource.data.email,
+          'employer',
+          request.resource.data.company_organization_type
+        );
+    }
+
+    function isSelfEmployerUpdate(employerId) {
+      return isSelfEmployerBase(employerId)
+        && resource.data.uid == employerId
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.approval_status == 'pending';
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin() || canReadWorkspaceUser(userId, resource.data);
+      allow list: if isAdmin() || canReadWorkspaceUser(userId, resource.data);
+      allow create: if isAdmin() || isSelfUserCreate(userId);
+      allow update: if isAdmin() || isSelfUserUpdate(userId);
+      allow delete: if isAdmin() || isOwner(userId);
+    }
+
+    match /employers/{employerId} {
+      allow get: if isOwner(employerId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin() || isSelfEmployerCreate(employerId);
+      allow update: if isAdmin() || isSelfEmployerUpdate(employerId);
+      allow delete: if isAdmin() || isOwner(employerId);
+
+      match /workspace_users/{userId} {
+        allow get: if isAdmin() || canReadWorkspaceUserDirectory(employerId, userId, resource.data);
+        allow list: if isAdmin() || canReadWorkspaceUserDirectory(employerId, userId, resource.data);
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    match /applicant_registration/{applicantId} {
+      allow get: if isOwner(applicantId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(applicantId) || isAdmin();
+      allow update: if isOwner(applicantId) || isAdmin();
+      allow delete: if isOwner(applicantId) || isAdmin();
+    }
+
+    match /deleted_user_history/{historyId} {
+      allow get, list: if isAdmin();
+      allow update: if isAdmin();
+      allow create, delete: if false;
+    }
+
+    match /jobs/{jobId} {
+      allow get, list: if isAdmin()
+        || canManageWorkspaceJob(resource.data)
+        || canReadPublicJob(resource.data);
+      allow create: if isAdmin()
+        || (
+          canManageWorkspaceJob(request.resource.data)
+          && request.resource.data.title is string
+          && request.resource.data.companyName is string
+          && request.resource.data.created_by is string
+          && request.resource.data.created_by == request.auth.uid
+        );
+      allow update, delete: if isAdmin() || canManageWorkspaceJob(resource.data);
+    }
+
+    match /employer_registration/{email} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

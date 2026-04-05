@@ -1,0 +1,43 @@
+{
+  "name": "data-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js",
+    "build": "node --max-old-space-size=6144 ./node_modules/vite/bin/vite.js build",
+    "preview": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js preview",
+    "test:unit": "vitest",
+    "format": "oxfmt src/"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fortawesome/fontawesome-free": "^7.2.0",
+    "@tensorflow-models/blazeface": "^0.1.0",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow-models/face-landmarks-detection": "^1.0.6",
+    "@tensorflow/tfjs": "^4.22.0",
+    "bootstrap-icons": "^1.13.1",
+    "firebase": "^12.11.0",
+    "flag-icons": "^7.5.0",
+    "pinia": "^3.0.4",
+    "react-toastify": "^11.0.5",
+    "tesseract.js": "^7.0.0",
+    "vue": "^3.5.29",
+    "vue-router": "^5.0.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "@vitejs/plugin-vue": "^6.0.4",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^28.1.0",
+    "oxfmt": "^0.35.0",
+    "tailwindcss": "^4.2.2",
+    "vite": "^7.3.1",
+    "vite-plugin-vue-devtools": "^8.0.6",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}
