@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps({
   assessmentRecords: {
@@ -23,6 +23,12 @@ const isAssessmentSubmitConfirmOpen = ref(false)
 const assessmentSubmitConfirmMode = ref('confirm')
 const isAssessmentSubmitting = ref(false)
 const assessmentSubmissionResult = ref(null)
+const isViewerLoading = ref(false)
+
+const VIEWER_SWITCH_DELAY_MS = 1000
+
+let viewerSwitchToken = 0
+let viewerSwitchTimeoutId = null
 
 const cloneJson = (value, fallback) => {
   try {
@@ -101,6 +107,13 @@ const getAssessmentFilterId = (record = {}) => {
   return 'ready'
 }
 
+const clearViewerSwitchTimeout = () => {
+  if (viewerSwitchTimeoutId) {
+    clearTimeout(viewerSwitchTimeoutId)
+    viewerSwitchTimeoutId = null
+  }
+}
+
 const syncDraftsFromRecords = (records) => {
   const nextDrafts = { ...answerDrafts.value }
   const activeIds = new Set()
@@ -175,6 +188,7 @@ const normalizedAssessmentRecords = computed(() =>
         questionsCount: Array.isArray(record?.questions) ? record.questions.length : 0,
         filterId: getAssessmentFilterId(record),
         statusToneClass: getAssessmentStatusToneClass(record?.statusTone),
+        avatarImageUrl: String(record?.logoUrl || record?.avatarImageUrl || record?.companyLogoUrl || '').trim(),
         avatarInitials: getAssessmentAvatarInitials(record?.company, record?.jobTitle),
         activityValue,
         activityLabel: formatAssessmentActivityDate(activityValue || assignedAtValue),
@@ -340,17 +354,49 @@ const nextAvailableAssessment = computed(() =>
 
 watch(filteredAssessmentRecords, (records) => {
   const nextRecords = Array.isArray(records) ? records : []
+  if (!nextRecords.length) {
+    clearViewerSwitchTimeout()
+    isViewerLoading.value = false
+    activeAssessmentId.value = ''
+    return
+  }
+
   if (!nextRecords.some((record) => String(record?.id || '').trim() === String(activeAssessmentId.value || '').trim())) {
-    activeAssessmentId.value = nextRecords[0]?.id || ''
+    selectAssessment(nextRecords[0]?.id || '', { immediate: true })
   }
 }, { immediate: true })
 
-const selectAssessment = (assessmentId) => {
+const selectAssessment = (assessmentId, options = {}) => {
   const normalizedAssessmentId = String(assessmentId || '').trim()
+  if (!normalizedAssessmentId) return
+
+  const immediate = options?.immediate === true
+  const isSameSelection = normalizedAssessmentId === String(activeAssessmentId.value || '').trim()
+
   activeAssessmentId.value = normalizedAssessmentId
   dismissedAssessmentLaunchIds.value = dismissedAssessmentLaunchIds.value.filter((id) => id !== normalizedAssessmentId)
   assessmentSubmissionResult.value = null
   isAssessmentSubmitConfirmOpen.value = false
+
+  if (immediate || VIEWER_SWITCH_DELAY_MS <= 0) {
+    clearViewerSwitchTimeout()
+    isViewerLoading.value = false
+    return
+  }
+
+  if (isSameSelection && !isViewerLoading.value) {
+    return
+  }
+
+  clearViewerSwitchTimeout()
+  isViewerLoading.value = true
+
+  const currentToken = ++viewerSwitchToken
+  viewerSwitchTimeoutId = setTimeout(() => {
+    if (currentToken !== viewerSwitchToken) return
+    isViewerLoading.value = false
+    viewerSwitchTimeoutId = null
+  }, VIEWER_SWITCH_DELAY_MS)
 }
 
 const setAnswerValue = (questionId, value) => {
@@ -458,6 +504,10 @@ const isCheckboxChecked = (questionId, optionIndex) =>
 const closeAssessmentSubmissionResult = () => {
   assessmentSubmissionResult.value = null
 }
+
+onBeforeUnmount(() => {
+  clearViewerSwitchTimeout()
+})
 </script>
 
 <template>
@@ -498,7 +548,15 @@ const closeAssessmentSubmissionResult = () => {
             :class="{ 'is-active': activeAssessment?.id === record.id }"
             @click="selectAssessment(record.id)"
           >
-            <span class="applicant-technical-assessment-page__avatar" aria-hidden="true">{{ record.avatarInitials }}</span>
+            <span class="applicant-technical-assessment-page__avatar" aria-hidden="true">
+              <img
+                v-if="record.avatarImageUrl"
+                :src="record.avatarImageUrl"
+                alt=""
+                class="applicant-technical-assessment-page__avatar-image"
+              />
+              <template v-else>{{ record.avatarInitials }}</template>
+            </span>
             <span class="applicant-technical-assessment-page__thread-copy">
               <span class="applicant-technical-assessment-page__thread-top">
                 <strong>{{ record.company }}</strong>
@@ -524,7 +582,15 @@ const closeAssessmentSubmissionResult = () => {
       </aside>
 
       <section class="applicant-technical-assessment-page__viewer">
-        <article v-if="activeAssessment" class="applicant-technical-assessment-page__message">
+        <div v-if="isViewerLoading" class="applicant-technical-assessment-page__viewer-loading" aria-live="polite" aria-label="Loading assessment">
+          <span class="applicant-technical-assessment-page__viewer-loading-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
+
+        <article v-else-if="activeAssessment" class="applicant-technical-assessment-page__message">
           <div class="applicant-technical-assessment-page__badges">
             <span class="badge">Technical Assessment</span>
             <span class="badge" :class="activeAssessment.statusToneClass">{{ activeAssessment.statusLabel }}</span>
@@ -534,7 +600,15 @@ const closeAssessmentSubmissionResult = () => {
           <header class="applicant-technical-assessment-page__message-head">
             <h2>{{ activeAssessment.title }}</h2>
             <div class="applicant-technical-assessment-page__sender">
-              <span class="applicant-technical-assessment-page__avatar" aria-hidden="true">{{ activeAssessment.avatarInitials }}</span>
+              <span class="applicant-technical-assessment-page__avatar" aria-hidden="true">
+                <img
+                  v-if="activeAssessment.avatarImageUrl"
+                  :src="activeAssessment.avatarImageUrl"
+                  alt=""
+                  class="applicant-technical-assessment-page__avatar-image"
+                />
+                <template v-else>{{ activeAssessment.avatarInitials }}</template>
+              </span>
               <div>
                 <strong>{{ activeAssessment.company }}</strong>
                 <span>{{ activeAssessment.jobTitle }}</span>
@@ -819,7 +893,8 @@ const closeAssessmentSubmissionResult = () => {
 .applicant-technical-assessment-page__threads{display:grid;grid-auto-rows:max-content;align-content:start;overflow-y:auto}
 .applicant-technical-assessment-page__thread{display:grid;grid-template-columns:auto minmax(0,1fr);align-content:start;gap:.85rem;padding:1rem;border:0;border-bottom:1px solid rgba(83,128,98,.12);background:transparent;text-align:left;cursor:pointer}
 .applicant-technical-assessment-page__thread.is-active{background:linear-gradient(90deg,rgba(216,242,226,.92),rgba(255,255,255,.98));box-shadow:inset 4px 0 0 #2d9360}
-.applicant-technical-assessment-page__avatar{display:inline-grid;place-items:center;width:2.8rem;aspect-ratio:1;border:1px solid rgba(83,128,98,.18);background:linear-gradient(135deg,rgba(225,243,233,.95),rgba(247,252,249,.96));color:#1c5138;font-size:.86rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.applicant-technical-assessment-page__avatar{display:inline-grid;place-items:center;width:2.8rem;aspect-ratio:1;border:1px solid rgba(83,128,98,.18);border-radius:.9rem;overflow:hidden;flex-shrink:0;background:linear-gradient(135deg,rgba(225,243,233,.95),rgba(247,252,249,.96));color:#1c5138;font-size:.86rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.applicant-technical-assessment-page__avatar-image{display:block;width:100%;height:100%;object-fit:cover}
 .applicant-technical-assessment-page__thread-copy,.applicant-technical-assessment-page__body,.applicant-technical-assessment-page__sender>div,.applicant-technical-assessment-page__question-card{display:grid;gap:.35rem;min-width:0}
 .applicant-technical-assessment-page__thread-top{display:flex;justify-content:space-between;gap:.75rem}
 .applicant-technical-assessment-page__thread-top strong,.applicant-technical-assessment-page__thread-subject,.applicant-technical-assessment-page__thread-preview,.applicant-technical-assessment-page__body p,.applicant-technical-assessment-page__detail strong,.applicant-technical-assessment-page__instruction p,.applicant-technical-assessment-page__box span,.applicant-technical-assessment-page__box strong,.applicant-technical-assessment-page__sender span,.applicant-technical-assessment-page__sender time{overflow-wrap:anywhere}
@@ -832,6 +907,11 @@ const closeAssessmentSubmissionResult = () => {
 .applicant-technical-assessment-page__thread-tag--new{border-color:rgba(37,99,235,.18)!important;background:rgba(219,234,254,.9)!important;color:#1d4ed8!important}
 .badge.is-info{background:rgba(225,239,248,.95);color:#285f86}.badge.is-success{background:rgba(221,245,231,.95);color:#176742}.badge.is-warning{background:rgba(255,245,219,.96);color:#996d00}.badge.is-danger{background:rgba(252,232,232,.94);color:#a03636}.badge.is-muted,.badge.muted{background:rgba(237,240,240,.96);color:#536665}
 .applicant-technical-assessment-page__viewer{display:flex;min-height:0;overflow:hidden}
+.applicant-technical-assessment-page__viewer-loading{display:grid;place-items:center;width:100%;min-height:100%;padding:2rem;background:radial-gradient(circle at top left,rgba(214,241,227,.58),transparent 42%),linear-gradient(180deg,rgba(249,253,251,.98),rgba(255,255,255,.98) 22%)}
+.applicant-technical-assessment-page__viewer-loading-dots{display:inline-flex;align-items:center;gap:.6rem}
+.applicant-technical-assessment-page__viewer-loading-dots span{width:.8rem;aspect-ratio:1;border-radius:50%;background:linear-gradient(180deg,#8ca497,#557b66);opacity:.35;animation:applicantTechnicalAssessmentViewerDots 1s ease-in-out infinite}
+.applicant-technical-assessment-page__viewer-loading-dots span:nth-child(2){animation-delay:.15s}
+.applicant-technical-assessment-page__viewer-loading-dots span:nth-child(3){animation-delay:.3s}
 .applicant-technical-assessment-page__message,.applicant-technical-assessment-page__empty{width:100%}
 .applicant-technical-assessment-page__message{display:grid;align-content:start;gap:1rem;padding:1.25rem 1.35rem 1.4rem;overflow-y:auto;background:linear-gradient(180deg,rgba(248,252,250,.96),rgba(255,255,255,.98) 16rem),#fff}
 .applicant-technical-assessment-page__message-head{display:grid;gap:1rem;padding-bottom:1rem;border-bottom:1px solid rgba(83,128,98,.16)}
@@ -895,6 +975,7 @@ const closeAssessmentSubmissionResult = () => {
 .applicant-technical-assessment-page__empty--inline{min-height:auto;height:100%}
 .applicant-technical-assessment-page__empty i{font-size:2rem;color:#4a7b5f}
 @keyframes applicantTechnicalAssessmentSpin{to{transform:rotate(360deg)}}
+@keyframes applicantTechnicalAssessmentViewerDots{0%,80%,100%{transform:translateY(0);opacity:.35}40%{transform:translateY(-.2rem);opacity:1}}
 @media (max-width:1180px){.applicant-technical-assessment-page{min-height:auto}.applicant-technical-assessment-page__shell{grid-template-columns:1fr}.applicant-technical-assessment-page__list-pane{max-height:28rem}.applicant-technical-assessment-page__viewer{min-height:30rem}}
 @media (max-width:720px){.applicant-technical-assessment-page{padding:0 .85rem}.applicant-technical-assessment-page__message{padding-inline:1rem}.applicant-technical-assessment-page__sender,.applicant-technical-assessment-page__details,.applicant-technical-assessment-page__result-summary{grid-template-columns:1fr}.applicant-technical-assessment-page__actions,.applicant-technical-assessment-page__actions--footer,.applicant-technical-assessment-page__modal-actions{flex-direction:column;align-items:stretch}.applicant-technical-assessment-page__actions button,.applicant-technical-assessment-page__rating-option,.applicant-technical-assessment-page__modal-actions button{width:100%}.applicant-technical-assessment-page__question-head{flex-direction:column;align-items:flex-start}}
 </style>

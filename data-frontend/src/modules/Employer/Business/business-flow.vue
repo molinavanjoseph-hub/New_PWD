@@ -50,7 +50,7 @@ import { createTrainingBindings } from '@/modules/Employer/Business/business_tra
 import pwdLogo from '@/assets/logo-pwd.png'
 import gcashPaymentLogo from '@/assets/gcash-payment.png'
 import masterCardLogo from '@/assets/master-card.png'
-import { cloudFunctions } from '@/firebase'
+import { auth, cloudFunctions } from '@/firebase'
 import '@/components/businesss.css'
 import {
   clearAuthSession,
@@ -85,6 +85,7 @@ import {
   subscribeToWorkspaceJobs,
   updateBusinessJobPost,
 } from '@/lib/jobs'
+import { saveBusinessJobOfferRecord } from '@/lib/job_offers'
 import { subscribeToBusinessJobApplications, updateApplicantJobApplicationStatus } from '@/lib/apply_jobs'
 import { saveBusinessInterviewSchedule, subscribeToBusinessInterviewSchedules } from '@/lib/business_interviews'
 import { mediaUrl } from '@/lib/media'
@@ -338,7 +339,10 @@ const paymentContactCountryDropdownRef = ref(null)
 const isNotificationMenuOpen = ref(false)
 const businessNotifications = ref([])
 const BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY = 'businessSeenNotificationIds'
+const BUSINESS_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY = 'businessDeliveredNotificationToastIds'
 const seenBusinessNotificationIds = ref([])
+const hasBusinessNotificationFeedHydrated = ref(false)
+const businessDeliveredNotificationToastIds = ref([])
 const proceedToPaymentTimeoutId = ref(null)
 const advancePaymentTimeoutId = ref(null)
 const paymentToastTimeoutId = ref(null)
@@ -401,9 +405,9 @@ const premiumNavigationItems = [
   { id: 'applicant-score', label: 'Applicant Score', icon: 'bi bi-bar-chart-fill' },
   { id: 'interview-scheduling', label: 'Interview Scheduling', icon: 'bi bi-calendar-event-fill' },
   { id: 'training-templates', label: 'Training Templates', icon: 'bi bi-journal-text' },
-  { id: 'user-overview', label: 'User Overview', icon: 'bi bi-people' },
+  { id: 'user-overview', label: 'Team Overview', icon: 'bi bi-people' },
   { id: 'create-user', label: 'Create User', icon: 'bi bi-person-plus-fill' },
-  { id: 'add-employee', label: 'Employer List', icon: 'bi bi-person-vcard-fill' },
+  { id: 'add-employee', label: 'Employee Directory', icon: 'bi bi-person-vcard-fill' },
   { id: 'permissions', label: 'Permissions', icon: 'bi bi-shield-lock-fill' },
 ]
 const premiumCelebrationPieces = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']
@@ -420,11 +424,18 @@ const formatBusinessNotificationTime = (value = new Date()) => {
   }
 }
 
-const readSeenBusinessNotificationIds = () => {
+const normalizeBusinessNotificationStorageOwner = (value = currentBusinessAccountIdentity.value) =>
+  String(value || '').trim().toLowerCase() || 'default'
+
+const resolveBusinessNotificationStorageKey = (baseKey, owner = currentBusinessAccountIdentity.value) =>
+  `${String(baseKey || '').trim()}:${normalizeBusinessNotificationStorageOwner(owner)}`
+
+const readBusinessStoredNotificationIds = (baseKey, owner = currentBusinessAccountIdentity.value) => {
   if (typeof window === 'undefined') return []
 
   try {
-    const storedValue = window.localStorage.getItem(BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY)
+    const scopedValue = window.localStorage.getItem(resolveBusinessNotificationStorageKey(baseKey, owner))
+    const storedValue = scopedValue ?? (baseKey === BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY ? window.localStorage.getItem(baseKey) : null)
     const parsedValue = storedValue ? JSON.parse(storedValue) : []
     return Array.isArray(parsedValue)
       ? parsedValue.map((value) => String(value || '').trim()).filter(Boolean)
@@ -434,14 +445,44 @@ const readSeenBusinessNotificationIds = () => {
   }
 }
 
-const persistSeenBusinessNotificationIds = () => {
+const writeBusinessStoredNotificationIds = (baseKey, values = [], owner = currentBusinessAccountIdentity.value) => {
   if (typeof window === 'undefined') return
 
   try {
-    window.localStorage.setItem(BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY, JSON.stringify(seenBusinessNotificationIds.value))
+    const normalizedValues = [...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    )]
+    window.localStorage.setItem(resolveBusinessNotificationStorageKey(baseKey, owner), JSON.stringify(normalizedValues))
   } catch {
     // Keep notifications usable even if storage is unavailable.
   }
+}
+
+const readSeenBusinessNotificationIds = (owner = currentBusinessAccountIdentity.value) =>
+  readBusinessStoredNotificationIds(BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY, owner)
+
+const persistSeenBusinessNotificationIds = (owner = currentBusinessAccountIdentity.value) => {
+  writeBusinessStoredNotificationIds(BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY, seenBusinessNotificationIds.value, owner)
+}
+
+const syncBusinessDeliveredNotificationToastIds = (notificationIds = [], owner = currentBusinessAccountIdentity.value) => {
+  const normalizedIds = [...new Set(
+    (Array.isArray(notificationIds) ? notificationIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  )]
+
+  businessDeliveredNotificationToastIds.value = normalizedIds
+  writeBusinessStoredNotificationIds(BUSINESS_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY, normalizedIds, owner)
+}
+
+const rememberBusinessDeliveredNotificationToastIds = (notificationIds = [], owner = currentBusinessAccountIdentity.value) => {
+  syncBusinessDeliveredNotificationToastIds([
+    ...businessDeliveredNotificationToastIds.value,
+    ...(Array.isArray(notificationIds) ? notificationIds : []),
+  ], owner)
 }
 
 const normalizeBusinessSystemNotice = (notice = {}) => {
@@ -460,10 +501,17 @@ const normalizeBusinessSystemNotice = (notice = {}) => {
     effectiveAtValue: Date.parse(String(notice?.effectiveAt || notice?.effective_at || '').trim()) || 0,
     createdAt,
     createdAtLabel: formatBusinessNotificationTime(new Date(createdAt)),
+    kind: 'admin-access-update',
   }
 }
 
-const pushBusinessNotification = ({ title = '', message = '', tone = 'info' } = {}) => {
+const pushBusinessNotification = ({
+  title = '',
+  message = '',
+  tone = 'info',
+  section = activeSection.value || 'dashboard',
+  applicationId = '',
+} = {}) => {
   const normalizedTitle = String(title || '').trim()
   const normalizedMessage = String(message || '').trim()
   if (!normalizedTitle && !normalizedMessage) return
@@ -476,6 +524,8 @@ const pushBusinessNotification = ({ title = '', message = '', tone = 'info' } = 
       title: normalizedTitle || 'Notification',
       message: normalizedMessage,
       tone: String(tone || 'info').trim().toLowerCase(),
+      section: String(section || activeSection.value || 'dashboard').trim() || 'dashboard',
+      applicationId: String(applicationId || '').trim(),
       createdAt: createdAt.toISOString(),
       createdAtLabel: formatBusinessNotificationTime(createdAt),
     },
@@ -494,7 +544,7 @@ const businessSystemNotifications = computed(() =>
 )
 
 const businessNavbarNotifications = computed(() =>
-  [...businessNotifications.value, ...businessSystemNotifications.value]
+  [...businessNotifications.value, ...businessApplicationNotifications.value, ...businessJobOfferNotifications.value, ...businessSystemNotifications.value]
     .sort((left, right) => Date.parse(right?.createdAt || '') - Date.parse(left?.createdAt || ''))
     .slice(0, 8)
     .map((notification) => ({
@@ -537,14 +587,62 @@ const toggleNotificationMenu = () => {
   }
 }
 
+const mapBusinessNotificationToastTone = (tone = '') => {
+  const normalizedTone = String(tone || '').trim().toLowerCase()
+  if (normalizedTone === 'danger' || normalizedTone === 'error') return 'error'
+  if (normalizedTone === 'warning') return 'warning'
+  if (normalizedTone === 'success') return 'success'
+  return 'info'
+}
+
+const previewBusinessNotification = (notification = {}) => {
+  const title = String(notification?.title || 'Notification').trim() || 'Notification'
+  const message = String(notification?.message || notification?.copy || title).trim()
+  if (!message) return
+
+  showPaymentToast(message, mapBusinessNotificationToastTone(notification?.tone), {
+    title,
+  })
+}
+
+const isBusinessAutoToastNotification = (notification = {}) =>
+  String(notification?.kind || '').trim() !== 'admin-access-update'
+
+const notifyBusinessActivity = (notification = {}) => {
+  if (!isBusinessAutoToastNotification(notification)) return
+  previewBusinessNotification(notification)
+}
+
 const openBusinessNotification = (notificationId) => {
   const targetId = String(notificationId || '').trim()
   markBusinessNotificationsAsRead(
     businessNavbarNotifications.value.filter((notification) => !targetId || notification.id === targetId),
   )
   const matchedNotification = businessNavbarNotifications.value.find((notification) => notification.id === targetId)
-  if (matchedNotification?.section && availableSidebarSectionIds.value.includes(matchedNotification.section)) {
-    activeSection.value = matchedNotification.section
+  if (!matchedNotification) {
+    isNotificationMenuOpen.value = false
+    showPaymentToast('That notification could not be opened right now.', 'warning')
+    return
+  }
+
+  const targetSection = String(matchedNotification?.section || '').trim()
+  const targetApplicationId = String(matchedNotification?.applicationId || '').trim()
+
+  previewBusinessNotification(matchedNotification)
+
+  if (targetApplicationId) {
+    activeSection.value = 'applicant-management'
+    void nextTick(() => {
+      openApplicantManagementDecision(targetApplicationId, 'view')
+    })
+  } else if (targetSection === 'subscriptions') {
+    openBusinessSubscriptionSection()
+  } else if (targetSection === 'profile') {
+    openPersonalization()
+  } else if (targetSection && availableSidebarSectionIds.value.includes(targetSection)) {
+    activeSection.value = targetSection
+  } else if (availableSidebarSectionIds.value.includes('dashboard')) {
+    activeSection.value = 'dashboard'
   }
   isNotificationMenuOpen.value = false
 }
@@ -696,7 +794,7 @@ const sidebarGroups = computed(() => {
       items: [
         {
           id: 'user-overview',
-          label: 'User Overview',
+          label: 'Team Overview',
         },
         {
           id: 'create-user',
@@ -704,7 +802,7 @@ const sidebarGroups = computed(() => {
         },
         {
           id: 'add-employee',
-          label: 'Employer List',
+          label: 'Employee Directory',
         },
         {
           id: 'permissions',
@@ -1186,7 +1284,9 @@ const JOB_POSTING_LANGUAGE_OPTIONS = [
   { value: 'English, Filipino', label: 'English and Filipino' },
   { value: 'Filipino, English, Taglish', label: 'Filipino, English, and Taglish' },
 ]
-const JOB_POSTING_MAX_VACANCIES = 500
+const JOB_POSTING_MAX_VACANCIES = 100
+const JOB_POSTING_MAX_DESCRIPTION_WORDS = 500
+const JOB_POSTING_MAX_REQUIREMENT_WORDS = 100
 
 // Job posting builder state at CRUD helpers nagsisimula rito dahil itong file rin ang nagho-host ng posting UI.
 const resolveJobPostingBusinessCategory = (fallback = '') =>
@@ -1326,6 +1426,19 @@ const createPostedJobRecord = (record = {}) => ({
   updated: formatPostedJobDateLabel(record.updatedAt || record.updated_at || record.createdAt || record.created_at, 'Updated'),
   posted: formatPostedJobDateLabel(record.createdAt || record.created_at || record.updatedAt || record.updated_at, 'Posted'),
 })
+const syncPostedJobRecordLocally = (record = {}) => {
+  const nextRecord = createPostedJobRecord(record)
+  if (!nextRecord.id) return
+
+  postedJobs.value = [
+    nextRecord,
+    ...postedJobs.value.filter((job) => String(job?.id || '').trim() !== nextRecord.id),
+  ].sort((left, right) => {
+    const leftTime = Date.parse(String(left?.updatedAt || left?.createdAt || '')) || 0
+    const rightTime = Date.parse(String(right?.updatedAt || right?.createdAt || '')) || 0
+    return rightTime - leftTime
+  })
+}
 const postedJobsSummary = computed(() => {
   const openCount = postedJobs.value.filter((job) => String(job.status || '').trim().toLowerCase() === 'open').length
   const draftCount = postedJobs.value.filter((job) => String(job.status || '').trim().toLowerCase() === 'draft').length
@@ -1640,7 +1753,7 @@ const toggleJobPostingTab = () => {
 }
 const userManagementPages = {
   'user-overview': {
-    title: 'User Overview',
+    title: 'Team Overview',
     description: 'See a quick summary of workspace users and linked team members.',
   },
   'create-user': {
@@ -1652,7 +1765,7 @@ const userManagementPages = {
     description: 'Create roles, update module access, and return to Create User when the role is ready to assign.',
   },
   'add-employee': {
-    title: 'Employer List',
+    title: 'Employee Directory',
     description: 'Review linked employee profiles in one clean list.',
   },
 }
@@ -1724,6 +1837,16 @@ const formatUserOverviewDate = (value) => {
     year: 'numeric',
   })
 }
+const resolveBusinessApplicationAppliedAt = (application = {}) =>
+  String(
+    application?.appliedAt
+    || application?.applied_at
+    || application?.submittedAt
+    || application?.submitted_at
+    || application?.createdAt
+    || application?.created_at
+    || '',
+  ).trim()
 const buildUserOverviewInitials = (value, fallback = 'TM') => {
   const parts = String(value || '')
     .split(/\s+/)
@@ -1929,7 +2052,7 @@ const executeWorkspaceUserAccountCreation = async () => {
     userOverviewStatusFilter.value = 'all'
     activeSection.value = 'user-overview'
     showPaymentToast(
-      `User account created for ${user?.email || normalizedGmail}. You can now see it in User Overview.`,
+      `User account created for ${user?.email || normalizedGmail}. You can now see it in Team Overview.`,
       'success',
     )
   } catch (error) {
@@ -2093,9 +2216,9 @@ const permissionModuleSections = [
     label: 'User Management',
     icon: 'bi bi-people-fill',
     modules: [
-      { id: 'user-overview', label: 'User Overview', description: 'See user counts, linked members, and team status at a glance.' },
+      { id: 'user-overview', label: 'Team Overview', description: 'See user counts, linked members, and team status at a glance.' },
       { id: 'create-user', label: 'Create User', description: 'Create workspace users and assign saved roles.' },
-      { id: 'add-employee', label: 'Employer List', description: 'Review linked employee profiles and member records.' },
+      { id: 'add-employee', label: 'Employee Directory', description: 'Review linked employee profiles and member records.' },
     ],
   },
   {
@@ -2518,10 +2641,16 @@ watch([canAccessOwnerWorkspaceControls, availableSidebarSectionIds], () => {
   if (!['profile', 'subscriptions'].includes(activeSection.value)) return
 
   const fallbackSection = resolveFirstAvailableBusinessSection()
-  activeSection.value = fallbackSection
-  activeSidebarGroup.value = sidebarGroups.value.find((group) =>
+  const fallbackGroupId = sidebarGroups.value.find((group) =>
     group.items.some((item) => item.id === fallbackSection),
   )?.id || activeSidebarGroup.value
+
+  if (fallbackSection !== activeSection.value) {
+    activeSection.value = fallbackSection
+  }
+  if (fallbackGroupId !== activeSidebarGroup.value) {
+    activeSidebarGroup.value = fallbackGroupId
+  }
 }, { immediate: true })
 function isPermissionModuleFullAccess(module) {
   return Boolean(module?.permissions?.full)
@@ -2769,7 +2898,7 @@ const applicantManagementRows = computed(() =>
     const isFinalStatus = isApplicantManagementFinalStatus(statusLabel)
     const jobTitle = String(application?.jobTitle || 'Applied Job').trim() || 'Applied Job'
     const businessLabel = String(application?.businessName || application?.companyName || businessName.value || 'Business').trim()
-    const appliedAt = formatUserOverviewDate(application?.appliedAt || application?.createdAt)
+    const appliedAt = formatUserOverviewDate(resolveBusinessApplicationAppliedAt(application))
     const disabilityLabel = String(application?.applicantDisability || 'Not specified').trim() || 'Not specified'
     const barangayLabel = String(application?.applicantBarangay || 'Not specified').trim() || 'Not specified'
     const languageLabel = String(application?.applicantLanguage || 'Not specified').trim() || 'Not specified'
@@ -2856,6 +2985,158 @@ const dashboardApplicantFeed = computed(() => {
     })
     .slice(0, 7)
 })
+const getBusinessApplicationNotificationTimestamp = (application = {}) => {
+  const candidates = [
+    application?.statusUpdatedAt,
+    application?.status_updated_at,
+    application?.updatedAt,
+    application?.updated_at,
+    application?.appliedAt,
+    application?.applied_at,
+    application?.createdAt,
+    application?.created_at,
+  ]
+
+  for (const value of candidates) {
+    const parsed = Date.parse(String(value || '').trim())
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+
+  return 0
+}
+
+const businessApplicationNotifications = computed(() =>
+  businessJobApplications.value
+    .map((application, index) => {
+      const applicationId = String(application?.id || '').trim()
+      const applicantName = String(application?.applicantName || 'Applicant').trim() || 'Applicant'
+      const jobTitle = String(application?.jobTitle || 'Applied Job').trim() || 'Applied Job'
+      const statusLabel = formatApplicantManagementStatusLabel(application?.status)
+      const normalizedStatus = normalizeUserOverviewValue(statusLabel || 'pending').replace(/\s+/g, '-') || 'pending'
+      const normalizedRawStatus = normalizeUserOverviewValue(application?.status || 'pending')
+      const createdAtValue = getBusinessApplicationNotificationTimestamp(application)
+      const createdAt = createdAtValue ? new Date(createdAtValue) : new Date()
+
+      let title = 'Application update'
+      let message = `${applicantName} has an update for ${jobTitle}.`
+      let tone = 'accent'
+
+      if (normalizedStatus === 'pending') {
+        title = 'New application received'
+        message = `${applicantName} applied for ${jobTitle}. Open Applicant Management to review this application.`
+      } else if (normalizedStatus === 'under-review') {
+        title = 'Application needs review'
+        message = `${applicantName}'s ${jobTitle} application is still waiting for your next decision.`
+        tone = 'warning'
+      } else if (normalizedStatus === 'interview') {
+        title = 'Interview-stage applicant'
+        message = `${applicantName} reached the interview stage for ${jobTitle}.`
+        tone = 'success'
+      } else if (['accepted', 'hired'].includes(normalizedRawStatus)) {
+        title = normalizedRawStatus === 'hired' ? 'Hiring confirmed' : 'Applicant accepted'
+        message = normalizedRawStatus === 'hired'
+          ? `${applicantName} is now marked as hired for ${jobTitle}.`
+          : `${applicantName} accepted the next step for ${jobTitle}.`
+        tone = 'success'
+      } else if (normalizedStatus === 'approved') {
+        title = 'Applicant approved'
+        message = `${applicantName} is approved for ${jobTitle}.`
+        tone = 'success'
+      } else if (normalizedStatus === 'rejected') {
+        title = 'Application rejected'
+        message = `${applicantName}'s ${jobTitle} application is marked as rejected.`
+        tone = 'danger'
+      } else if (normalizedStatus === 'discontinued') {
+        title = 'Application discontinued'
+        message = `${applicantName}'s ${jobTitle} application was discontinued.`
+        tone = 'danger'
+      }
+
+      return {
+        id: `business-application-${applicationId || index + 1}-${normalizedStatus}`,
+        applicationId,
+        title,
+        message,
+        tone,
+        section: 'applicant-management',
+        createdAt: createdAt.toISOString(),
+        createdAtLabel: formatBusinessNotificationTime(createdAt),
+        kind: 'application',
+      }
+    })
+    .filter((notification) => String(notification?.id || '').trim())
+    .sort((left, right) => Date.parse(String(right?.createdAt || '').trim()) - Date.parse(String(left?.createdAt || '').trim()))
+    .slice(0, 8),
+)
+
+const getBusinessJobOfferNotificationTimestamp = (application = {}) => {
+  const candidates = [
+    application?.jobOfferApplicantRespondedAt,
+    application?.job_offer_applicant_responded_at,
+    application?.jobOfferUpdatedAt,
+    application?.job_offer_updated_at,
+    application?.jobOfferSentAt,
+    application?.job_offer_sent_at,
+    application?.jobOfferCreatedAt,
+    application?.job_offer_created_at,
+  ]
+
+  for (const value of candidates) {
+    const parsed = Date.parse(String(value || '').trim())
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+
+  return getBusinessApplicationNotificationTimestamp(application)
+}
+
+const businessJobOfferNotifications = computed(() =>
+  businessJobApplications.value
+    .map((application, index) => {
+      const applicationId = String(application?.id || '').trim()
+      const applicantName = String(application?.applicantName || 'Applicant').trim() || 'Applicant'
+      const jobTitle = String(application?.jobTitle || 'Applied Job').trim() || 'Applied Job'
+      const offerStatus = String(application?.jobOfferStatus || application?.job_offer_status || '').trim().toLowerCase()
+      if (!offerStatus) return null
+
+      const createdAtValue = getBusinessJobOfferNotificationTimestamp(application)
+      const createdAt = createdAtValue ? new Date(createdAtValue) : new Date()
+
+      let title = 'Job offer update'
+      let message = `${applicantName} has a job offer update for ${jobTitle}.`
+      let tone = 'accent'
+      let section = 'issue-offer'
+
+      if (['sent', 'offered', 'pending'].includes(offerStatus)) {
+        title = 'Job offer sent'
+        message = `You sent a job offer to ${applicantName} for ${jobTitle}.`
+      } else if (['accepted', 'confirmed', 'signed'].includes(offerStatus)) {
+        title = 'Job offer accepted'
+        message = `${applicantName} accepted the job offer for ${jobTitle}.`
+        tone = 'success'
+        section = 'contract-signing'
+      } else if (['declined', 'rejected', 'cancelled', 'canceled', 'expired'].includes(offerStatus)) {
+        title = 'Job offer declined'
+        message = `${applicantName} declined or closed the job offer for ${jobTitle}.`
+        tone = 'danger'
+      }
+
+      return {
+        id: `business-job-offer-${applicationId || index + 1}-${offerStatus}`,
+        applicationId,
+        title,
+        message,
+        tone,
+        section,
+        createdAt: createdAt.toISOString(),
+        createdAtLabel: formatBusinessNotificationTime(createdAt),
+        kind: 'job-offer',
+      }
+    })
+    .filter((notification) => String(notification?.id || '').trim())
+    .sort((left, right) => Date.parse(String(right?.createdAt || '').trim()) - Date.parse(String(left?.createdAt || '').trim()))
+    .slice(0, 8),
+)
+
 const filteredApplicantManagementRows = computed(() => {
   const normalizedSearch = normalizeUserOverviewValue(applicantManagementSearch.value)
   const normalizedRole = normalizeUserOverviewValue(applicantManagementRoleFilter.value || 'all')
@@ -2917,7 +3198,7 @@ const selectedApplicantManagementDetails = computed(() => {
     applicantAvatar: mediaUrl(String(application?.applicantAvatar || application?.avatar || application?.avatar_url || '').trim()),
     jobTitle: String(application?.jobTitle || 'Applied Job').trim() || 'Applied Job',
     statusLabel: formatApplicantManagementStatusLabel(application?.status),
-    appliedAtLabel: formatUserOverviewDate(application?.appliedAt || application?.createdAt),
+    appliedAtLabel: formatUserOverviewDate(resolveBusinessApplicationAppliedAt(application)),
     disabilityLabel: String(application?.applicantDisability || 'Not specified').trim() || 'Not specified',
     languageLabel: String(application?.applicantLanguage || 'Not specified').trim() || 'Not specified',
     barangayLabel: String(application?.applicantBarangay || 'Not specified').trim() || 'Not specified',
@@ -3471,17 +3752,22 @@ const resetWorkspaceUserDirectoryState = () => {
   isWorkspaceUserDirectoryLoading.value = false
   workspaceUserDirectorySyncMessage.value = ''
 }
-const resolveBusinessStartupSyncMessage = (error, fallbackMessage) => {
+const isBusinessStartupPermissionIssue = (error) => {
   const normalizedCode = String(error?.code || '').trim().toLowerCase()
   const rawMessage = String(error?.message || '').trim()
   const normalizedMessage = rawMessage.toLowerCase()
 
-  if (
+  return (
     normalizedCode.includes('permission-denied')
     || normalizedCode.includes('unauthenticated')
     || normalizedMessage.includes('insufficient permissions')
     || normalizedMessage.includes('missing or insufficient permissions')
-  ) {
+  )
+}
+const resolveBusinessStartupSyncMessage = (error, fallbackMessage) => {
+  const rawMessage = String(error?.message || '').trim()
+
+  if (isBusinessStartupPermissionIssue(error)) {
     return fallbackMessage
   }
 
@@ -3489,7 +3775,9 @@ const resolveBusinessStartupSyncMessage = (error, fallbackMessage) => {
 }
 const logBusinessStartupSyncIssue = (scope, error, fallbackMessage) => {
   const resolvedMessage = resolveBusinessStartupSyncMessage(error, fallbackMessage)
-  console.warn(`[business-workspace] ${scope}`, error)
+  if (!isBusinessStartupPermissionIssue(error)) {
+    console.warn(`[business-workspace] ${scope}`, error)
+  }
   return resolvedMessage
 }
 const persistEmployeeDirectoryState = () => {}
@@ -3498,8 +3786,26 @@ const restoreEmployeeDirectoryState = () => {
   userAccountDraft.value = createDefaultUserAccountDraft()
   employeeDraft.value = createDefaultEmployeeDraft()
 }
-const getWorkspaceOwnerDirectoryId = (user = authUser.value) =>
-  String(user?.workspace_owner_id || user?.workspaceOwnerId || user?.id || '').trim()
+const isWorkspaceMemberDirectoryAccount = (user = authUser.value) => {
+  const workspaceOwnerId = String(user?.workspace_owner_id || user?.workspaceOwnerId || '').trim()
+  const actorUid = String(auth.currentUser?.uid || user?.uid || user?.id || '').trim()
+  const workspaceOwnerEmail = String(user?.workspace_owner_email || user?.workspaceOwnerEmail || '').trim().toLowerCase()
+  const actorEmail = String(user?.email || user?.gmail || user?.business_contact_email || auth.currentUser?.email || '').trim().toLowerCase()
+
+  return user?.workspace_member === true
+    || (workspaceOwnerId && actorUid && workspaceOwnerId !== actorUid)
+    || (!workspaceOwnerId && workspaceOwnerEmail && actorEmail && workspaceOwnerEmail !== actorEmail)
+}
+const getWorkspaceOwnerDirectoryId = (user = authUser.value) => {
+  const workspaceOwnerId = String(user?.workspace_owner_id || user?.workspaceOwnerId || '').trim()
+  const actorUid = String(auth.currentUser?.uid || user?.uid || user?.id || '').trim()
+
+  if (isWorkspaceMemberDirectoryAccount(user)) {
+    return workspaceOwnerId || actorUid
+  }
+
+  return actorUid || workspaceOwnerId
+}
 const startBusinessMemberEmployerSync = () => {
   stopBusinessMemberEmployerSync()
 
@@ -3517,7 +3823,9 @@ const startBusinessMemberEmployerSync = () => {
         : createDefaultEmployeeDirectory()
     },
     (error) => {
-      console.warn('[business-workspace] Member employer subscription failed.', error)
+      if (!isBusinessStartupPermissionIssue(error)) {
+        console.warn('[business-workspace] Member employer subscription failed.', error)
+      }
     },
   )
 }
@@ -3562,6 +3870,18 @@ const startWorkspaceJobPostsSync = () => {
   stopWorkspaceJobsSync()
 
   const workspaceOwnerId = getWorkspaceOwnerDirectoryId()
+  const workspaceOwnerEmail = String(
+    authUser.value?.workspace_owner_email
+    || authUser.value?.workspaceOwnerEmail
+    || authUser.value?.business_contact_email
+    || authUser.value?.email
+    || '',
+  ).trim().toLowerCase()
+  const actorIds = [
+    auth.currentUser?.uid,
+    authUser.value?.uid,
+    authUser.value?.id,
+  ]
   if (!workspaceOwnerId) {
     postedJobs.value = []
     isPostedJobsLoading.value = false
@@ -3572,7 +3892,21 @@ const startWorkspaceJobPostsSync = () => {
   isPostedJobsLoading.value = true
   postedJobsSyncMessage.value = ''
   stopWorkspaceJobsSync = subscribeToWorkspaceJobs(
-    workspaceOwnerId,
+    {
+      workspaceOwnerId,
+      workspaceOwnerEmail,
+      actorIds,
+      ownerIds: [
+        authUser.value?.workspace_owner_id,
+        authUser.value?.workspaceOwnerId,
+        workspaceOwnerId,
+      ],
+      ownerEmails: [
+        authUser.value?.workspace_owner_email,
+        authUser.value?.workspaceOwnerEmail,
+        workspaceOwnerEmail,
+      ],
+    },
     (jobs) => {
       postedJobs.value = Array.isArray(jobs)
         ? jobs.map((job) => createPostedJobRecord(job))
@@ -3646,6 +3980,97 @@ const closeJobPostingDropdownOnOutsideClick = (event) => {
     closeJobPostingDropdown()
   }
 }
+const countJobPostingWords = (value = '') =>
+  (String(value || '').match(/[A-Za-z]+/g) || []).length
+const sanitizeJobPostingWordsOnlyText = (
+  value,
+  {
+    maxWords = Number.POSITIVE_INFINITY,
+    allowNewlines = false,
+    preserveTrailingWhitespace = false,
+  } = {},
+) => {
+  const normalizedValue = String(value || '').replace(/\r\n?/g, '\n')
+  const normalizedLines = normalizedValue.split('\n')
+  const endsWithNewline = allowNewlines && preserveTrailingWhitespace && normalizedValue.endsWith('\n')
+
+  let wordsRemaining = Number.isFinite(maxWords) ? maxWords : Number.MAX_SAFE_INTEGER
+  const limitedLines = []
+
+  for (const line of normalizedLines) {
+    const sanitizedLine = line.replace(/[^A-Za-z\s]/g, ' ')
+    const hasTrailingSpace = preserveTrailingWhitespace && /[ \t]+$/.test(sanitizedLine)
+    const words = sanitizedLine.match(/[A-Za-z]+/g) || []
+
+    if (!words.length) {
+      if (allowNewlines && limitedLines.length && limitedLines[limitedLines.length - 1] !== '') {
+        limitedLines.push('')
+      }
+      continue
+    }
+
+    if (wordsRemaining <= 0) break
+
+    const keptWords = words.slice(0, wordsRemaining)
+    if (!keptWords.length) break
+
+    const normalizedLine = keptWords.join(' ')
+    const shouldPreserveTrailingSpace = hasTrailingSpace && keptWords.length === words.length && wordsRemaining > keptWords.length
+
+    limitedLines.push(shouldPreserveTrailingSpace ? `${normalizedLine} ` : normalizedLine)
+    wordsRemaining -= keptWords.length
+
+    if (keptWords.length < words.length) break
+  }
+
+  let result = allowNewlines
+    ? limitedLines.join('\n')
+    : limitedLines.filter(Boolean).join(' ')
+
+  if (endsWithNewline && result && wordsRemaining > 0) {
+    result = `${result}\n`
+  }
+
+  return preserveTrailingWhitespace ? result : result.trim()
+}
+const sanitizeJobPostingTitle = (value) =>
+  sanitizeJobPostingWordsOnlyText(value, { allowNewlines: false })
+const sanitizeJobPostingVacanciesInput = (value) => {
+  const digits = String(value || '').replace(/[^\d]/g, '').slice(0, 3)
+  if (!digits) return ''
+
+  return String(Math.min(Number(digits), JOB_POSTING_MAX_VACANCIES))
+}
+const sanitizeJobPostingPreferredAgeInput = (value) =>
+  String(value || '').replace(/[^\d]/g, '').slice(0, 3)
+const hasJobPostingSpamPattern = (value = '') => {
+  const normalizedValue = String(value || '').replace(/\s+/g, ' ').trim()
+  if (!normalizedValue) return false
+
+  const compactValue = normalizedValue.replace(/\s+/g, '')
+  if (/(.)\1{5,}/i.test(compactValue)) return true
+  if (/\b([A-Za-z]+)(?:\s+\1){3,}\b/i.test(normalizedValue)) return true
+
+  return false
+}
+const normalizeJobPostingDraftInput = (draft = {}) => ({
+  ...draft,
+  title: sanitizeJobPostingTitle(draft.title),
+  description: sanitizeJobPostingWordsOnlyText(draft.description, {
+    maxWords: JOB_POSTING_MAX_DESCRIPTION_WORDS,
+    allowNewlines: true,
+  }),
+  vacancies: sanitizeJobPostingVacanciesInput(draft.vacancies),
+  preferredAgeRange: sanitizeJobPostingPreferredAgeInput(draft.preferredAgeRange),
+  qualifications: sanitizeJobPostingWordsOnlyText(draft.qualifications, {
+    maxWords: JOB_POSTING_MAX_REQUIREMENT_WORDS,
+    allowNewlines: true,
+  }),
+  responsibilities: sanitizeJobPostingWordsOnlyText(draft.responsibilities, {
+    maxWords: JOB_POSTING_MAX_REQUIREMENT_WORDS,
+    allowNewlines: true,
+  }),
+})
 const handleJobPostingFieldChange = (key, value) => {
   if (key === 'disabilityType') {
     jobPostingDraft.value = {
@@ -3666,6 +4091,57 @@ const handleJobPostingFieldChange = (key, value) => {
     return
   }
 
+  if (key === 'title') {
+    jobPostingDraft.value = {
+      ...jobPostingDraft.value,
+      title: sanitizeJobPostingWordsOnlyText(value, {
+        allowNewlines: false,
+        preserveTrailingWhitespace: true,
+      }),
+    }
+    return
+  }
+
+  if (key === 'description') {
+    jobPostingDraft.value = {
+      ...jobPostingDraft.value,
+      description: sanitizeJobPostingWordsOnlyText(value, {
+        maxWords: JOB_POSTING_MAX_DESCRIPTION_WORDS,
+        allowNewlines: true,
+        preserveTrailingWhitespace: true,
+      }),
+    }
+    return
+  }
+
+  if (key === 'vacancies') {
+    jobPostingDraft.value = {
+      ...jobPostingDraft.value,
+      vacancies: sanitizeJobPostingVacanciesInput(value),
+    }
+    return
+  }
+
+  if (key === 'preferredAgeRange') {
+    jobPostingDraft.value = {
+      ...jobPostingDraft.value,
+      preferredAgeRange: sanitizeJobPostingPreferredAgeInput(value),
+    }
+    return
+  }
+
+  if (key === 'qualifications' || key === 'responsibilities') {
+    jobPostingDraft.value = {
+      ...jobPostingDraft.value,
+      [key]: sanitizeJobPostingWordsOnlyText(value, {
+        maxWords: JOB_POSTING_MAX_REQUIREMENT_WORDS,
+        allowNewlines: true,
+        preserveTrailingWhitespace: true,
+      }),
+    }
+    return
+  }
+
   jobPostingDraft.value = {
     ...jobPostingDraft.value,
     [key]: value,
@@ -3674,29 +4150,32 @@ const handleJobPostingFieldChange = (key, value) => {
 const saveJobPost = async () => {
   if (!canEditBusinessModule('job-posting')) {
     showPaymentToast('Your role has view-only access for Job Posting.', 'warning')
-    return
+    return false
   }
 
-  if (isSavingJobPost.value) return
+  if (isSavingJobPost.value) return false
+
+  const normalizedJobPostingDraft = normalizeJobPostingDraftInput(jobPostingDraft.value)
+  jobPostingDraft.value = normalizedJobPostingDraft
 
   const requiredFields = [
-    ['job title', jobPostingDraft.value.title],
+    ['job title', normalizedJobPostingDraft.title],
     ['company name', jobPostingCompanyNameDisplay.value],
-    ['description', jobPostingDraft.value.description],
+    ['description', normalizedJobPostingDraft.description],
     ['business category', jobPostingCategoryValue.value],
-    ['type', jobPostingDraft.value.type],
-    ['location', jobPostingDraft.value.location],
-    ['barangay', jobPostingDraft.value.barangay],
-    ['vacancies', jobPostingDraft.value.vacancies],
-    ['salary range', jobPostingDraft.value.salaryRange],
-    ['disability type', jobPostingDraft.value.disabilityType],
-    ['preferred age', jobPostingDraft.value.preferredAgeRange],
-    ['language', jobPostingDraft.value.language],
-    ['qualifications', jobPostingDraft.value.qualifications],
-    ['responsibilities', jobPostingDraft.value.responsibilities],
+    ['type', normalizedJobPostingDraft.type],
+    ['location', normalizedJobPostingDraft.location],
+    ['barangay', normalizedJobPostingDraft.barangay],
+    ['vacancies', normalizedJobPostingDraft.vacancies],
+    ['salary range', normalizedJobPostingDraft.salaryRange],
+    ['disability type', normalizedJobPostingDraft.disabilityType],
+    ['preferred age', normalizedJobPostingDraft.preferredAgeRange],
+    ['language', normalizedJobPostingDraft.language],
+    ['qualifications', normalizedJobPostingDraft.qualifications],
+    ['responsibilities', normalizedJobPostingDraft.responsibilities],
   ].concat(
     jobPostingDisabilityTypeNeedsSpecification.value
-      ? [['impairment specification', jobPostingDraft.value.impairmentSpecification]]
+      ? [['impairment specification', normalizedJobPostingDraft.impairmentSpecification]]
       : [],
   )
 
@@ -3706,18 +4185,45 @@ const saveJobPost = async () => {
 
   if (missingFields.length) {
     showPaymentToast(`Please complete your ${missingFields.join(', ')}.`, 'warning')
-    return
+    return false
   }
 
-  const vacancyCount = Number(jobPostingDraft.value.vacancies)
+  const spamField = [
+    ['job title', normalizedJobPostingDraft.title],
+    ['description', normalizedJobPostingDraft.description],
+    ['qualifications', normalizedJobPostingDraft.qualifications],
+    ['responsibilities', normalizedJobPostingDraft.responsibilities],
+  ].find(([, value]) => hasJobPostingSpamPattern(value))
+
+  if (spamField) {
+    showPaymentToast(`Please remove spam or repeated words from the ${spamField[0]}.`, 'warning')
+    return false
+  }
+
+  if (countJobPostingWords(normalizedJobPostingDraft.description) > JOB_POSTING_MAX_DESCRIPTION_WORDS) {
+    showPaymentToast(`Description must stay within ${JOB_POSTING_MAX_DESCRIPTION_WORDS} words.`, 'warning')
+    return false
+  }
+
+  if (countJobPostingWords(normalizedJobPostingDraft.qualifications) > JOB_POSTING_MAX_REQUIREMENT_WORDS) {
+    showPaymentToast(`Qualifications must stay within ${JOB_POSTING_MAX_REQUIREMENT_WORDS} words.`, 'warning')
+    return false
+  }
+
+  if (countJobPostingWords(normalizedJobPostingDraft.responsibilities) > JOB_POSTING_MAX_REQUIREMENT_WORDS) {
+    showPaymentToast(`Responsibilities must stay within ${JOB_POSTING_MAX_REQUIREMENT_WORDS} words.`, 'warning')
+    return false
+  }
+
+  const vacancyCount = Number(normalizedJobPostingDraft.vacancies)
   if (!Number.isFinite(vacancyCount) || vacancyCount < 1 || vacancyCount > JOB_POSTING_MAX_VACANCIES) {
     showPaymentToast(`Vacancies must be between 1 and ${JOB_POSTING_MAX_VACANCIES}.`, 'warning')
-    return
+    return false
   }
 
-  if (!parseJobPostingSalaryRange(jobPostingDraft.value.salaryRange).isValid) {
+  if (!parseJobPostingSalaryRange(normalizedJobPostingDraft.salaryRange).isValid) {
     showPaymentToast('Enter the salary as minimum - maximum, for example PHP 15,000 - PHP 20,000.', 'warning')
-    return
+    return false
   }
 
   const workspaceOwnerId = getWorkspaceOwnerDirectoryId()
@@ -3728,11 +4234,11 @@ const saveJobPost = async () => {
     || authUser.value?.email
     || '',
   ).trim().toLowerCase()
-  const employerId = String(authUser.value?.id || '').trim()
+  const employerId = String(auth.currentUser?.uid || authUser.value?.uid || authUser.value?.id || workspaceOwnerId || '').trim()
 
   if (!workspaceOwnerId || !employerId) {
     showPaymentToast('Refresh the page and sign in again before saving this job post.', 'error')
-    return
+    return false
   }
 
   try {
@@ -3740,36 +4246,38 @@ const saveJobPost = async () => {
     const wasEditingJobPost = isEditingJobPost.value
 
     const payload = {
-      title: jobPostingDraft.value.title,
+      title: normalizedJobPostingDraft.title,
       companyName: jobPostingCompanyNameDisplay.value,
       logoUrl: businessAvatar.value || profileForm.value.avatar || '',
-      description: jobPostingDraft.value.description,
+      description: normalizedJobPostingDraft.description,
       category: jobPostingCategoryValue.value,
-      type: jobPostingDraft.value.type,
-      setup: jobPostingDraft.value.type,
-      location: jobPostingDraft.value.location,
-      barangay: jobPostingDraft.value.barangay,
+      type: normalizedJobPostingDraft.type,
+      setup: normalizedJobPostingDraft.type,
+      location: normalizedJobPostingDraft.location,
+      barangay: normalizedJobPostingDraft.barangay,
       vacancies: vacancyCount,
       salary: jobPostingSalaryPreview.value,
-      salaryRange: jobPostingDraft.value.salaryRange,
-      disabilityType: jobPostingDraft.value.disabilityType,
-      impairmentSpecification: jobPostingDraft.value.impairmentSpecification,
-      preferredAgeRange: jobPostingDraft.value.preferredAgeRange,
-      language: jobPostingDraft.value.language,
-      languages: jobPostingDraft.value.language,
-      qualifications: toJobPostingLineItems(jobPostingDraft.value.qualifications),
-      responsibilities: toJobPostingLineItems(jobPostingDraft.value.responsibilities),
-      status: String(jobPostingDraft.value.status || 'open').trim().toLowerCase() || 'open',
+      salaryRange: normalizedJobPostingDraft.salaryRange,
+      disabilityType: normalizedJobPostingDraft.disabilityType,
+      impairmentSpecification: normalizedJobPostingDraft.impairmentSpecification,
+      preferredAgeRange: normalizedJobPostingDraft.preferredAgeRange,
+      language: normalizedJobPostingDraft.language,
+      languages: normalizedJobPostingDraft.language,
+      qualifications: toJobPostingLineItems(normalizedJobPostingDraft.qualifications),
+      responsibilities: toJobPostingLineItems(normalizedJobPostingDraft.responsibilities),
+      status: String(normalizedJobPostingDraft.status || 'open').trim().toLowerCase() || 'open',
       workspaceOwnerId,
       workspaceOwnerEmail,
       employerId,
       createdBy: employerId,
     }
 
-    if (wasEditingJobPost) {
-      await updateBusinessJobPost(editingJobPostId.value, payload)
-    } else {
-      await createBusinessJobPost(payload)
+    const savedJob = wasEditingJobPost
+      ? await updateBusinessJobPost(editingJobPostId.value, payload)
+      : await createBusinessJobPost(payload)
+
+    if (savedJob) {
+      syncPostedJobRecordLocally(savedJob)
     }
 
     resetJobPostingDraft()
@@ -3780,6 +4288,7 @@ const saveJobPost = async () => {
         : 'Job post published. It now appears in Posted Jobs and the public landing page.',
       'success',
     )
+    return true
   } catch (error) {
     showPaymentToast(
       error instanceof Error
@@ -3789,6 +4298,7 @@ const saveJobPost = async () => {
           : 'Unable to publish the job post right now.',
       'error',
     )
+    return false
   } finally {
     isSavingJobPost.value = false
   }
@@ -6429,13 +6939,17 @@ const openIssueOfferModal = (applicationId) => {
   isBusinessIssueOfferOpen.value = true
 }
 
-const closeIssueOfferModal = () => {
-  if (isBusinessJobOfferSaving.value) return
-
+const resetIssueOfferModalState = () => {
   isBusinessIssueOfferOpen.value = false
   businessIssueOfferSelectedApplicationId.value = ''
   businessIssueOfferDraft.value = createDefaultBusinessIssueOfferDraft()
   businessIssueOfferFormError.value = ''
+}
+
+const closeIssueOfferModal = () => {
+  if (isBusinessJobOfferSaving.value) return
+
+  resetIssueOfferModalState()
 }
 
 const setBusinessIssueOfferField = (field, value) => {
@@ -6446,12 +6960,35 @@ const setBusinessIssueOfferField = (field, value) => {
 }
 
 const submitBusinessIssueOffer = async () => {
+  if (isBusinessJobOfferSaving.value) return
+
+  if (!canEditBusinessModule('issue-offer') && !canEditBusinessModule('applicant-management')) {
+    showPaymentToast('Your role has view-only access for Issue Offer.', 'warning')
+    return
+  }
+
+  const targetApplication = getApplicantManagementApplicationById(businessIssueOfferSelectedApplicationId.value)
+  if (!targetApplication) {
+    businessIssueOfferFormError.value = 'That applicant application could not be found.'
+    showPaymentToast('That applicant application could not be found.', 'error')
+    return
+  }
+
+  const normalizedDraft = {
+    offerTitle: String(businessIssueOfferDraft.value.offerTitle || '').trim(),
+    compensation: String(businessIssueOfferDraft.value.compensation || '').trim(),
+    startDate: String(businessIssueOfferDraft.value.startDate || '').trim(),
+    responseDeadline: String(businessIssueOfferDraft.value.responseDeadline || '').trim(),
+    offerLetter: String(businessIssueOfferDraft.value.offerLetter || '').trim(),
+  }
+  businessIssueOfferDraft.value = normalizedDraft
+
   const requiredFields = [
-    ['offer title', businessIssueOfferDraft.value.offerTitle],
-    ['compensation', businessIssueOfferDraft.value.compensation],
-    ['start date', businessIssueOfferDraft.value.startDate],
-    ['response deadline', businessIssueOfferDraft.value.responseDeadline],
-    ['offer letter', businessIssueOfferDraft.value.offerLetter],
+    ['offer title', normalizedDraft.offerTitle],
+    ['compensation', normalizedDraft.compensation],
+    ['start date', normalizedDraft.startDate],
+    ['response deadline', normalizedDraft.responseDeadline],
+    ['offer letter', normalizedDraft.offerLetter],
   ]
   const missingFields = requiredFields
     .filter(([, value]) => String(value || '').trim() === '')
@@ -6462,12 +6999,80 @@ const submitBusinessIssueOffer = async () => {
     return
   }
 
+  if (normalizedDraft.startDate < businessIssueOfferMinDate.value) {
+    businessIssueOfferFormError.value = 'Choose a start date from today onward.'
+    return
+  }
+
+  if (normalizedDraft.responseDeadline < businessIssueOfferMinDate.value) {
+    businessIssueOfferFormError.value = 'Choose a response deadline from today onward.'
+    return
+  }
+
+  const selectedCandidate = selectedBusinessIssueOfferCandidate.value
+  const stageSummary = buildBusinessIssueOfferStageSummary(targetApplication)
+  const workspaceOwnerId = String(
+    targetApplication?.workspaceOwnerId
+    || targetApplication?.workspace_owner_id
+    || getWorkspaceOwnerDirectoryId()
+    || '',
+  ).trim()
+  const workspaceOwnerEmail = String(
+    targetApplication?.workspaceOwnerEmail
+    || targetApplication?.workspace_owner_email
+    || authUser.value?.workspace_owner_email
+    || authUser.value?.workspaceOwnerEmail
+    || authUser.value?.business_contact_email
+    || authUser.value?.email
+    || '',
+  ).trim().toLowerCase()
+  const workspaceOwnerName = String(
+    businessName.value
+    || targetApplication?.workspaceOwnerName
+    || targetApplication?.workspace_owner_name
+    || targetApplication?.businessName
+    || targetApplication?.companyName
+    || '',
+  ).trim()
+
+  if (!workspaceOwnerId) {
+    businessIssueOfferFormError.value = 'Refresh the page and sign in again before sending this offer.'
+    showPaymentToast('Refresh the page and sign in again before sending this offer.', 'error')
+    return
+  }
+
   isBusinessJobOfferSaving.value = true
   businessIssueOfferFormError.value = ''
 
   try {
-    showPaymentToast('Pilot preview only: the Issue Offer layout is now in place on this branch for UI review before the live merge.', 'success')
-    closeIssueOfferModal()
+    await saveBusinessJobOfferRecord({
+      id: String(targetApplication?.jobOfferId || targetApplication?.job_offer_id || targetApplication?.id || '').trim(),
+      applicationId: String(targetApplication?.id || '').trim(),
+      workspaceOwnerId,
+      workspaceOwnerName,
+      workspaceOwnerEmail,
+      applicantId: String(targetApplication?.applicantId || targetApplication?.applicant_id || selectedCandidate?.applicantId || '').trim(),
+      applicantName: String(targetApplication?.applicantName || selectedCandidate?.applicantName || 'Applicant').trim(),
+      applicantEmail: String(targetApplication?.applicantEmail || selectedCandidate?.applicantEmail || '').trim().toLowerCase(),
+      applicantAvatar: String(targetApplication?.applicantAvatar || targetApplication?.applicant_avatar || targetApplication?.avatar || selectedCandidate?.applicantAvatar || '').trim(),
+      jobId: String(targetApplication?.jobId || targetApplication?.job_id || selectedCandidate?.jobId || '').trim(),
+      jobTitle: String(targetApplication?.jobTitle || selectedCandidate?.jobTitle || 'Applied Job').trim(),
+      interviewType: stageSummary.interviewType,
+      offerTitle: normalizedDraft.offerTitle,
+      offerLetter: normalizedDraft.offerLetter,
+      compensation: normalizedDraft.compensation,
+      startDate: normalizedDraft.startDate,
+      responseDeadline: normalizedDraft.responseDeadline,
+      offerStatus: 'sent',
+    })
+
+    const applicantName = String(targetApplication?.applicantName || selectedCandidate?.applicantName || 'the applicant').trim()
+    resetIssueOfferModalState()
+    showPaymentToast(`Job offer sent successfully to ${applicantName}.`, 'success')
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unable to send this job offer right now.'
+    businessIssueOfferFormError.value = errorMessage
+    showPaymentToast(errorMessage, 'error')
   } finally {
     isBusinessJobOfferSaving.value = false
   }
@@ -8046,18 +8651,31 @@ const applyBusinessSecurityRouteState = () => {
 
   try {
     if (routeState.section === 'profile') {
-      activeSection.value = 'profile'
-      subscriptionView.value = 'plans'
+      const nextSection = resolveAccessibleBusinessSection('profile')
+      if (nextSection !== activeSection.value) {
+        activeSection.value = nextSection
+      }
+      if (subscriptionView.value !== 'plans') {
+        subscriptionView.value = 'plans'
+      }
       return
     }
 
     if (routeState.section === 'subscriptions') {
-      activeSection.value = 'subscriptions'
-      subscriptionView.value = routeState.subscriptionView
-      if (routeState.planId) {
-        selectedCheckoutPlanId.value = resolveAvailableBusinessCheckoutPlanId(routeState.planId)
+      const nextSection = resolveAccessibleBusinessSection('subscriptions')
+      if (nextSection !== activeSection.value) {
+        activeSection.value = nextSection
       }
-      if (routeState.subscriptionView !== 'payment') {
+      if (subscriptionView.value !== routeState.subscriptionView) {
+        subscriptionView.value = routeState.subscriptionView
+      }
+      if (routeState.planId) {
+        const nextPlanId = resolveAvailableBusinessCheckoutPlanId(routeState.planId)
+        if (selectedCheckoutPlanId.value !== nextPlanId) {
+          selectedCheckoutPlanId.value = nextPlanId
+        }
+      }
+      if (routeState.subscriptionView !== 'payment' && paymentStep.value !== 1) {
         paymentStep.value = 1
       }
     }
@@ -8871,11 +9489,6 @@ const showPaymentToast = (message, tone = 'error', options = {}) => {
     message,
     tone,
     actions,
-  })
-  pushBusinessNotification({
-    title: paymentToast.title,
-    message,
-    tone,
   })
 
   const duration = Number.isFinite(options.duration) ? options.duration : (actions.length ? 0 : 2600)
@@ -10318,22 +10931,30 @@ const startAuthUserProfileSync = () => {
 
 const hydrateBusinessWorkspaceUi = async () => {
   if (!authUser.value) return
+  if (hydrateBusinessWorkspaceUiPromise) return hydrateBusinessWorkspaceUiPromise
 
-  try {
-    restoreBusinessSubscriptionState()
-    applyBusinessSecurityRouteState()
-    restoreSeenPremiumNavItems()
-    restorePermissionRolesState()
-    restoreEmployeeDirectoryState()
-    restoreAssessmentTemplateLibrary()
-    restoreTrainingTemplateLibrary()
-    await nextTick()
-  } catch (error) {
-    console.warn('[business-workspace] Unable to hydrate the business workspace UI state.', error)
-  }
+  hydrateBusinessWorkspaceUiPromise = (async () => {
+    try {
+      restoreBusinessSubscriptionState()
+      applyBusinessSecurityRouteState()
+      restoreSeenPremiumNavItems()
+      restorePermissionRolesState()
+      restoreEmployeeDirectoryState()
+      restoreAssessmentTemplateLibrary()
+      restoreTrainingTemplateLibrary()
+      await nextTick()
+    } catch (error) {
+      console.warn('[business-workspace] Unable to hydrate the business workspace UI state.', error)
+    } finally {
+      hydrateBusinessWorkspaceUiPromise = null
+    }
+  })()
+
+  return hydrateBusinessWorkspaceUiPromise
 }
 
 const deferredBusinessStartupIdentity = ref('')
+let hydrateBusinessWorkspaceUiPromise = null
 
 const runBusinessTaskAfterFirstPaint = (task, delayMs = 0) => {
   const execute = () => {
@@ -10451,11 +11072,64 @@ watch(authUser, () => {
   applyBusinessSecurityRouteState()
 })
 
+watch(
+  currentBusinessAccountIdentity,
+  (identity) => {
+    seenBusinessNotificationIds.value = readSeenBusinessNotificationIds(identity)
+    syncBusinessDeliveredNotificationToastIds(
+      readBusinessStoredNotificationIds(BUSINESS_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY, identity),
+      identity,
+    )
+    hasBusinessNotificationFeedHydrated.value = false
+  },
+  { immediate: true },
+)
+
 watch(businessNavbarNotifications, () => {
   if (isNotificationMenuOpen.value) {
     markBusinessNotificationsAsRead()
   }
 }, { deep: true })
+
+watch(
+  businessNavbarNotifications,
+  (notifications) => {
+    const activeNotifications = (Array.isArray(notifications) ? notifications : [])
+      .map((item) => ({
+        ...item,
+        id: String(item?.id || '').trim(),
+      }))
+      .filter((item) => item.id)
+
+    const nextNotificationIds = activeNotifications.map((item) => item.id)
+    const persistedDeliveredNotificationIds = businessDeliveredNotificationToastIds.value
+      .filter((notificationId) => nextNotificationIds.includes(notificationId))
+    const deliveredNotificationIds = new Set(persistedDeliveredNotificationIds)
+
+    if (persistedDeliveredNotificationIds.length !== businessDeliveredNotificationToastIds.value.length) {
+      syncBusinessDeliveredNotificationToastIds(persistedDeliveredNotificationIds)
+    }
+
+    const unseenNotifications = activeNotifications.filter((item) =>
+      isBusinessAutoToastNotification(item)
+      && !seenBusinessNotificationIds.value.includes(item.id)
+      && !deliveredNotificationIds.has(item.id))
+
+    if (!hasBusinessNotificationFeedHydrated.value) {
+      hasBusinessNotificationFeedHydrated.value = true
+      if (unseenNotifications.length) {
+        notifyBusinessActivity(unseenNotifications[0])
+      }
+    } else if (unseenNotifications.length) {
+      notifyBusinessActivity(unseenNotifications[0])
+    }
+
+    if (!unseenNotifications.length) return
+
+    rememberBusinessDeliveredNotificationToastIds(unseenNotifications.map((item) => item.id))
+  },
+  { deep: true },
+)
 
 watch(
   () => ([

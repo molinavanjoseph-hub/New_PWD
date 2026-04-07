@@ -80,8 +80,8 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
             <div class="business-applicants-modal__identity-copy">
               <strong>{{ candidate.applicantName }}</strong>
               <span>{{ candidate.applicantEmail }}</span>
-              <span class="business-issue-offer__status" :class="`is-${resolveBusinessJobOfferStatusTone(candidate.offer)}`">
-                {{ formatBusinessJobOfferStatusLabel(candidate.offer) }}
+              <span class="business-issue-offer__status" :class="`is-${resolveBusinessJobOfferStatusTone(candidate)}`">
+                {{ formatBusinessJobOfferStatusLabel(candidate) }}
               </span>
             </div>
           </div>
@@ -164,10 +164,11 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
           </p>
         </div>
 
-        <div class="business-modal__actions">
+        <div class="business-modal__actions business-issue-offer-modal__actions">
           <button
             type="button"
             class="business-modal__button business-modal__button--secondary"
+            :disabled="isSubmitting"
             @click="$emit('close')"
           >
             Close
@@ -178,7 +179,12 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
             :disabled="isSubmitting"
             @click="$emit('submit')"
           >
-            {{ isSubmitting ? 'Sending...' : submitLabel }}
+            <span v-if="isSubmitting" class="business-issue-offer-modal__button-spinner" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </span>
+            <span>{{ isSubmitting ? 'Sending offer' : submitLabel }}</span>
           </button>
         </div>
       </div>
@@ -195,6 +201,7 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
 .business-issue-offer-modal {
   width: min(64rem, calc(100vw - 1.5rem));
   max-height: min(92vh, 56rem);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 1.1rem;
   padding: clamp(1rem, 1vw + 0.9rem, 1.55rem);
   overflow: hidden;
@@ -204,6 +211,7 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
   min-height: 0;
   overflow-y: auto;
   padding-right: 0.2rem;
+  padding-bottom: 0.35rem;
 }
 
 .business-issue-offer-modal :deep(.business-applicants-modal__grid) {
@@ -216,8 +224,44 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
   align-content: start;
 }
 
-.business-issue-offer-modal :deep(.business-modal__actions) {
-  padding-top: 0.15rem;
+.business-issue-offer-modal__actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: auto;
+  padding-top: 0.9rem;
+  border-top: 1px solid rgba(217, 226, 220, 0.92);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.92) 20%, #ffffff 100%);
+}
+
+.business-issue-offer-modal__actions .business-modal__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+
+.business-issue-offer-modal__button-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+}
+
+.business-issue-offer-modal__button-spinner span {
+  width: 0.32rem;
+  height: 0.32rem;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.32;
+  animation: business-issue-offer-modal-dot 1s ease-in-out infinite;
+}
+
+.business-issue-offer-modal__button-spinner span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+
+.business-issue-offer-modal__button-spinner span:nth-child(3) {
+  animation-delay: 0.24s;
 }
 
 .business-issue-offer__status {
@@ -311,6 +355,20 @@ const formatBusinessJobOfferDateLabel = (dateRaw, options = {}) => {
 
   .business-issue-offer-modal__letter textarea {
     min-height: 8.5rem;
+  }
+}
+
+@keyframes business-issue-offer-modal-dot {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.32;
+  }
+
+  40% {
+    transform: translateY(-0.16rem);
+    opacity: 1;
   }
 }
 </style>

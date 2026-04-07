@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { toRefs } from 'vue'
+import { computed, ref, toRefs, watch } from 'vue'
 const props = defineProps([
   'jobPostingTab',
   'isEditingJobPost',
@@ -110,20 +110,58 @@ const {
   setJobPostingDisabilityDropdownElement,
   setJobPostingLanguageDropdownElement,
 } = toRefs(props)
+
+const JOB_POSTING_MAX_DESCRIPTION_WORDS = 500
+const JOB_POSTING_MAX_REQUIREMENT_WORDS = 100
+const countJobPostingWords = (value = '') =>
+  (String(value || '').match(/[A-Za-z]+/g) || []).length
+const descriptionWordCount = computed(() => countJobPostingWords(jobPostingDraft.value?.description))
+const qualificationWordCount = computed(() => countJobPostingWords(jobPostingDraft.value?.qualifications))
+const responsibilityWordCount = computed(() => countJobPostingWords(jobPostingDraft.value?.responsibilities))
+const isJobPostConfirmOpen = ref(false)
+const jobPostConfirmTitle = computed(() =>
+  isEditingJobPost.value ? 'Save job changes' : 'Post this job',
+)
+const jobPostConfirmMessage = computed(() =>
+  isEditingJobPost.value
+    ? 'Do you want to save these job post changes now?'
+    : 'Do you want to publish this job post now?',
+)
+const openJobPostConfirm = () => {
+  if (isSavingJobPost.value) return
+
+  isJobPostConfirmOpen.value = true
+}
+const closeJobPostConfirm = () => {
+  if (isSavingJobPost.value) return
+
+  isJobPostConfirmOpen.value = false
+}
+const confirmJobPost = async () => {
+  if (typeof saveJobPost.value === 'function') {
+    const didSave = await saveJobPost.value()
+    if (didSave) {
+      isJobPostConfirmOpen.value = false
+    }
+  }
+}
+
+watch([jobPostingTab, isEditingJobPost], () => {
+  isJobPostConfirmOpen.value = false
+})
 </script>
 
 <template>
 <section class="business-job-post">
               <div class="business-job-post__lead">
                 <div class="business-job-post__copy">
-                  <p class="business-job-post__eyebrow">Recruitment</p>
                   <h2>{{ jobPostingTab === 'create' ? (isEditingJobPost ? 'Edit job post' : 'Create a new job post') : 'Posted Jobs' }}</h2>
                   <p>
                     {{
                       jobPostingTab === 'create'
                         ? isEditingJobPost
                           ? 'Update the job details below, then save your changes to refresh the live posting.'
-                          : 'Fill in the job details below to prepare a complete posting draft for your recruitment team.'
+                          : 'Fill in the job details below to prepare a complete posting draft for your workspace.'
                         : 'Review, edit, close, reopen, or permanently delete the job posts saved in Firebase for this business workspace.'
                     }}
                   </p>
@@ -152,7 +190,7 @@ const {
 
               <div v-if="jobPostingTab === 'create'" class="business-job-post__create">
                 <div class="business-job-post__shell">
-                  <form class="business-job-post__form-shell" @submit.prevent="saveJobPost">
+                  <form class="business-job-post__form-shell" @submit.prevent="openJobPostConfirm">
                     <fieldset class="business-job-post__fieldset" :disabled="!canEditBusinessModule('job-posting')">
                       <div class="business-job-post__section-head">
                         <div>
@@ -176,10 +214,15 @@ const {
                             <label class="business-job-post__field">
                               <span>Job Title</span>
                               <input
-                                v-model="jobPostingDraft.title"
+                                :value="jobPostingDraft.title"
                                 type="text"
+                                autocomplete="off"
                                 placeholder="Data Encoder"
+                                @input="handleJobPostingFieldChange('title', $event.target.value)"
                               />
+                              <div class="business-job-post__field-meta">
+                                <small class="business-job-post__field-help">Letters and spaces only. Numbers and symbols are not allowed.</small>
+                              </div>
                             </label>
 
                             <label class="business-job-post__field">
@@ -196,10 +239,15 @@ const {
                           <label class="business-job-post__field business-job-post__field--wide">
                             <span>Description</span>
                             <textarea
-                              v-model="jobPostingDraft.description"
+                              :value="jobPostingDraft.description"
                               rows="4"
                               placeholder="Describe the role..."
+                              @input="handleJobPostingFieldChange('description', $event.target.value)"
                             ></textarea>
+                            <div class="business-job-post__field-meta">
+                              <small class="business-job-post__field-help">Words only. Maximum of 500 words.</small>
+                              <small class="business-job-post__field-count">{{ descriptionWordCount }}/{{ JOB_POSTING_MAX_DESCRIPTION_WORDS }} words</small>
+                            </div>
                           </label>
 
                           <div class="business-job-post__grid business-job-post__grid--two">
@@ -307,12 +355,16 @@ const {
                             <label class="business-job-post__field">
                               <span>Vacancies</span>
                               <input
-                                v-model="jobPostingDraft.vacancies"
-                                type="number"
-                                min="1"
-                                :max="JOB_POSTING_MAX_VACANCIES"
+                                :value="jobPostingDraft.vacancies"
+                                type="text"
+                                inputmode="numeric"
+                                maxlength="3"
                                 placeholder="Enter number of vacancies"
+                                @input="handleJobPostingFieldChange('vacancies', $event.target.value)"
                               />
+                              <div class="business-job-post__field-meta">
+                                <small class="business-job-post__field-help">Numbers only. Maximum of {{ JOB_POSTING_MAX_VACANCIES }} vacancies.</small>
+                              </div>
                             </label>
                           </div>
 
@@ -379,10 +431,16 @@ const {
                             <label class="business-job-post__field">
                               <span>Preferred Age</span>
                               <input
-                                v-model="jobPostingDraft.preferredAgeRange"
+                                :value="jobPostingDraft.preferredAgeRange"
                                 type="text"
+                                inputmode="numeric"
+                                maxlength="3"
                                 placeholder="Enter preferred age"
+                                @input="handleJobPostingFieldChange('preferredAgeRange', $event.target.value)"
                               />
+                              <div class="business-job-post__field-meta">
+                                <small class="business-job-post__field-help">Numbers only.</small>
+                              </div>
                             </label>
 
                             <label class="business-job-post__field">
@@ -421,15 +479,6 @@ const {
                               </div>
                             </label>
                           </div>
-
-                          <label v-if="jobPostingDisabilityTypeNeedsSpecification" class="business-job-post__field business-job-post__field--wide">
-                            <span>Impairment Specification</span>
-                            <input
-                              v-model="jobPostingDraft.impairmentSpecification"
-                              type="text"
-                              :placeholder="getJobPostingImpairmentSpecificationPlaceholder(jobPostingDraft.disabilityType)"
-                            />
-                          </label>
                         </section>
 
                         <section class="business-job-post__group">
@@ -445,19 +494,29 @@ const {
                             <label class="business-job-post__field">
                               <span>Qualifications</span>
                               <textarea
-                                v-model="jobPostingDraft.qualifications"
+                                :value="jobPostingDraft.qualifications"
                                 rows="5"
                                 placeholder="Basic computer literacy&#10;Attention to detail"
+                                @input="handleJobPostingFieldChange('qualifications', $event.target.value)"
                               ></textarea>
+                              <div class="business-job-post__field-meta">
+                                <small class="business-job-post__field-help">Words only. Maximum of 100 words.</small>
+                                <small class="business-job-post__field-count">{{ qualificationWordCount }}/{{ JOB_POSTING_MAX_REQUIREMENT_WORDS }} words</small>
+                              </div>
                             </label>
 
                             <label class="business-job-post__field">
                               <span>Responsibilities</span>
                               <textarea
-                                v-model="jobPostingDraft.responsibilities"
+                                :value="jobPostingDraft.responsibilities"
                                 rows="5"
                                 placeholder="Encode and verify records&#10;Coordinate with admin team"
+                                @input="handleJobPostingFieldChange('responsibilities', $event.target.value)"
                               ></textarea>
+                              <div class="business-job-post__field-meta">
+                                <small class="business-job-post__field-help">Words only. Maximum of 100 words.</small>
+                                <small class="business-job-post__field-count">{{ responsibilityWordCount }}/{{ JOB_POSTING_MAX_REQUIREMENT_WORDS }} words</small>
+                              </div>
                             </label>
                           </div>
                         </section>
@@ -756,4 +815,34 @@ const {
 
               </div>
             </section>
+
+<Transition name="business-trial-modal">
+  <div v-if="isJobPostConfirmOpen" class="business-modal" @click.self="closeJobPostConfirm">
+    <div class="business-modal__card" role="dialog" aria-modal="true" aria-labelledby="business-job-post-confirm-title">
+      <div class="business-modal__copy">
+        <h2 id="business-job-post-confirm-title">{{ jobPostConfirmTitle }}</h2>
+        <p>{{ jobPostConfirmMessage }}</p>
+        <p class="business-modal__note">Select No to keep editing, or Yes to continue.</p>
+      </div>
+      <div class="business-modal__actions">
+        <button
+          type="button"
+          class="business-modal__button business-modal__button--secondary"
+          :disabled="isSavingJobPost"
+          @click="closeJobPostConfirm"
+        >
+          No
+        </button>
+        <button
+          type="button"
+          class="business-modal__button business-modal__button--primary"
+          :disabled="isSavingJobPost"
+          @click="confirmJobPost"
+        >
+          {{ isSavingJobPost ? (isEditingJobPost ? 'Saving...' : 'Posting...') : 'Yes' }}
+        </button>
+      </div>
+    </div>
+  </div>
+</Transition>
 </template>

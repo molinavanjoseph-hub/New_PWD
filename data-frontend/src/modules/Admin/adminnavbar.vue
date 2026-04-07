@@ -142,7 +142,7 @@ const showBreadcrumbParent = () =>
               :class="{ 'is-unread': !notification.read }"
               type="button"
               role="menuitem"
-              @click="$emit('open-notification', notification.id)"
+              @click.stop="$emit('open-notification', notification.id)"
             >
               <span class="admin-navbar__notification-dot" :class="{ 'is-unread': !notification.read }" aria-hidden="true" />
 
@@ -206,7 +206,8 @@ const showBreadcrumbParent = () =>
   background: #ffffff;
   font-family: "Inter", "Segoe UI", sans-serif;
   position: relative;
-  z-index: 20;
+  z-index: 100;
+  overflow: visible;
 }
 
 .admin-navbar__left {
@@ -273,6 +274,8 @@ const showBreadcrumbParent = () =>
   align-items: center;
   justify-content: flex-end;
   gap: 0.45rem;
+  position: relative;
+  overflow: visible;
   padding: 0.24rem 0.28rem 0.24rem 0.55rem;
   border: 1px solid rgba(223, 227, 234, 0.9);
   border-radius: 999px;
@@ -282,12 +285,14 @@ const showBreadcrumbParent = () =>
 
 .admin-navbar__profile-wrap {
   position: relative;
-  z-index: 25;
+  z-index: 110;
+  isolation: isolate;
 }
 
 .admin-navbar__notification-wrap {
   position: relative;
-  z-index: 25;
+  z-index: 110;
+  isolation: isolate;
 }
 
 .admin-navbar__tool {
@@ -389,7 +394,7 @@ const showBreadcrumbParent = () =>
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 16px 30px rgba(96, 108, 128, 0.16);
   backdrop-filter: blur(12px);
-  z-index: 30;
+  z-index: 115;
 }
 
 .admin-navbar__dropdown-item {
@@ -419,7 +424,7 @@ const showBreadcrumbParent = () =>
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 16px 30px rgba(96, 108, 128, 0.16);
   backdrop-filter: blur(12px);
-  z-index: 30;
+  z-index: 115;
 }
 
 .admin-navbar__notification-head {

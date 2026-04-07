@@ -26,24 +26,36 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  showMenuButton: {
+    type: Boolean,
+    default: false,
+  },
+  isSidebarOpen: {
+    type: Boolean,
+    default: false,
+  },
   notifications: {
     type: Array,
     default: () => [],
   },
 })
 
-const emit = defineEmits(['open-personalization', 'open-settings', 'logout', 'open-notification'])
+const emit = defineEmits(['open-personalization', 'open-settings', 'logout', 'open-notification', 'toggle-sidebar'])
 
 const isDropdownOpen = ref(false)
 const isNotificationOpen = ref(false)
 const profileMenuRef = ref(null)
 const notificationMenuRef = ref(null)
 const APPLICANT_SEEN_NOTIFICATION_STORAGE_KEY = 'applicantSeenNotificationIds'
+const normalizeNotificationOwnerKey = (value) => String(value || '').trim().toLowerCase() || 'default'
+const resolveSeenNotificationStorageKey = () =>
+  `${APPLICANT_SEEN_NOTIFICATION_STORAGE_KEY}:${normalizeNotificationOwnerKey(props.applicantEmail)}`
+
 function readSeenNotificationIds() {
   if (typeof window === 'undefined') return []
 
   try {
-    const storedValue = window.localStorage.getItem(APPLICANT_SEEN_NOTIFICATION_STORAGE_KEY)
+    const storedValue = window.localStorage.getItem(resolveSeenNotificationStorageKey())
     const parsedValue = storedValue ? JSON.parse(storedValue) : []
     return Array.isArray(parsedValue)
       ? parsedValue.map((value) => String(value || '').trim()).filter(Boolean)
@@ -89,7 +101,7 @@ const persistSeenNotificationIds = () => {
   if (typeof window === 'undefined') return
 
   try {
-    window.localStorage.setItem(APPLICANT_SEEN_NOTIFICATION_STORAGE_KEY, JSON.stringify(seenNotificationIds.value))
+    window.localStorage.setItem(resolveSeenNotificationStorageKey(), JSON.stringify(seenNotificationIds.value))
   }
   catch {
     // Ignore browser storage errors and keep the dropdown interactive.
@@ -101,6 +113,8 @@ const getNotificationSectionLabel = (value) => {
   const normalizedValue = String(value || '').trim().toLowerCase()
   if (normalizedValue === 'applications') return 'Applications'
   if (normalizedValue === 'interviews') return 'Interviews'
+  if (normalizedValue === 'job-offers') return 'Job Offers'
+  if (normalizedValue === 'contracts') return 'Contracts'
   if (normalizedValue === 'technical-assessment') return 'Technical Assessment'
   if (normalizedValue === 'settings') return 'Workspace'
   return 'Updates'
@@ -116,6 +130,14 @@ const getNotificationIconClass = (section, tone) => {
 
   if (normalizedSection === 'interviews') {
     return normalizedTone === 'danger' ? 'bi bi-calendar-x-fill' : 'bi bi-camera-video-fill'
+  }
+
+  if (normalizedSection === 'job-offers') {
+    return normalizedTone === 'danger' ? 'bi bi-briefcase-fill' : 'bi bi-envelope-paper-fill'
+  }
+
+  if (normalizedSection === 'contracts') {
+    return normalizedTone === 'danger' ? 'bi bi-file-earmark-x-fill' : 'bi bi-file-earmark-check-fill'
   }
 
   if (normalizedSection === 'technical-assessment') {
@@ -248,17 +270,47 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocumentClick)
 })
 
+watch(
+  () => props.applicantEmail,
+  () => {
+    seenNotificationIds.value = readSeenNotificationIds()
+  },
+  { immediate: true },
+)
+
+watch(
+  [isNotificationOpen, normalizedNotifications],
+  ([isOpen, notifications]) => {
+    if (!isOpen) return
+    markNotificationsAsSeen(notifications)
+  },
+  { deep: true },
+)
+
 </script>
 
 <template>
   <header class="applicant-navbar">
     <div class="applicant-navbar__left">
-      <div class="applicant-navbar__breadcrumb" aria-label="Breadcrumb">
-        <span class="applicant-navbar__breadcrumb-home">
-          <i class="bi bi-house-door" aria-hidden="true" />
-        </span>
-        <i class="bi bi-chevron-right applicant-navbar__breadcrumb-separator" aria-hidden="true" />
-        <span class="applicant-navbar__breadcrumb-current">{{ title }}</span>
+      <div class="applicant-navbar__topline">
+        <button
+          v-if="showMenuButton"
+          type="button"
+          class="applicant-navbar__menu-toggle"
+          :aria-expanded="isSidebarOpen ? 'true' : 'false'"
+          :aria-label="isSidebarOpen ? 'Close applicant menu' : 'Open applicant menu'"
+          @click="emit('toggle-sidebar')"
+        >
+          <i :class="isSidebarOpen ? 'bi bi-x-lg' : 'bi bi-list'" aria-hidden="true" />
+        </button>
+
+        <div class="applicant-navbar__breadcrumb" aria-label="Breadcrumb">
+          <span class="applicant-navbar__breadcrumb-home">
+            <i class="bi bi-house-door" aria-hidden="true" />
+          </span>
+          <i class="bi bi-chevron-right applicant-navbar__breadcrumb-separator" aria-hidden="true" />
+          <span class="applicant-navbar__breadcrumb-current">{{ title }}</span>
+        </div>
       </div>
 
       <div class="applicant-navbar__title-block">
@@ -318,14 +370,14 @@ onBeforeUnmount(() => {
                 :data-icon="item.section === 'applications' ? 'AP' : item.section === 'interviews' ? 'IN' : item.section === 'technical-assessment' ? 'TA' : 'UP'"
                 type="button"
                 role="menuitem"
-                @click="handleNotificationClick(item)"
+                @click.stop="handleNotificationClick(item)"
               >
                 <span class="applicant-navbar__notification-dot" :class="{ 'is-unread': item.isUnread }" aria-hidden="true" />
 
                 <div class="applicant-navbar__notification-copy" :data-meta="`${item.sentLabel} | ${item.timeLabel}`">
                   <strong>{{ item.title }}</strong>
                   <span>{{ item.message }}</span>
-                  <small>{{ item.sentLabel }} · {{ item.timeLabel }}</small>
+                  <small>{{ item.sentLabel }} - {{ item.timeLabel }}</small>
                 </div>
               </button>
             </div>
@@ -337,16 +389,19 @@ onBeforeUnmount(() => {
       </div>
 
       <div ref="profileMenuRef" class="applicant-navbar__profile-shell">
-        <button type="button" class="applicant-navbar__profile" :aria-expanded="isDropdownOpen ? 'true' : 'false'" @click="toggleDropdown">
+        <button
+          type="button"
+          class="applicant-navbar__profile"
+          :class="{ 'is-open': isDropdownOpen }"
+          :aria-expanded="isDropdownOpen ? 'true' : 'false'"
+          aria-haspopup="menu"
+          :aria-label="`Open profile menu for ${applicantFirstName} ${applicantLastName}`"
+          @click="toggleDropdown"
+        >
           <div class="applicant-navbar__avatar">
             <img v-if="applicantAvatarUrl" :src="applicantAvatarUrl" alt="Applicant profile avatar" class="applicant-navbar__avatar-image" />
             <span v-else>{{ applicantInitials }}</span>
           </div>
-          <div class="applicant-navbar__profile-copy">
-            <p class="applicant-navbar__name">{{ applicantFirstName }} {{ applicantLastName }}</p>
-            <p class="applicant-navbar__email">{{ applicantEmail }}</p>
-          </div>
-          <i class="bi bi-chevron-down applicant-navbar__chevron" :class="{ 'is-open': isDropdownOpen }" aria-hidden="true" />
         </button>
 
         <transition name="applicant-navbar-dropdown">

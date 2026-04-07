@@ -50,6 +50,7 @@ const resolveNotificationToneClass = (notification) => {
   const tone = String(notification?.tone || '').trim().toLowerCase()
   if (tone === 'warning') return 'is-warning'
   if (tone === 'success') return 'is-success'
+  if (tone === 'danger') return 'is-danger'
   return ''
 }
 
@@ -122,7 +123,7 @@ const formatNotificationTime = (notification) =>
               type="button"
               class="business-navbar__notification-item"
               :class="[resolveNotificationToneClass(notification), { 'is-unread': !notification.read }]"
-              @click="openBusinessNotification(notification.id)"
+              @click.stop="openBusinessNotification(notification.id)"
             >
               <span class="business-navbar__notification-icon" aria-hidden="true" />
 

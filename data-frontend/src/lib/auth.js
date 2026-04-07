@@ -501,6 +501,30 @@ export const uploadApplicantProfileAvatar = async (applicantId, file) => {
   })
 }
 
+export const uploadApplicantResume = async (applicantId, file) => {
+  await waitForAuthReady()
+
+  const normalizedApplicantId = text(applicantId)
+  if (!normalizedApplicantId) {
+    throw new Error('Missing applicant account ID for resume upload.')
+  }
+
+  if (!(file instanceof File) || file.size <= 0) {
+    throw new Error('Choose a valid PDF resume first.')
+  }
+
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+  if (!isPdf) {
+    throw new Error('Only PDF resume files are allowed.')
+  }
+
+  const timestamp = Date.now()
+  return uploadStorageFile({
+    path: `users/${normalizedApplicantId}/applicant/resume/${timestamp}-${safeFileName(file.name)}`,
+    file,
+  })
+}
+
 const uploadRegistrationFiles = async ({ uid, role, formData, storageInstance = storage }) => {
   const timestamp = Date.now()
   const uploadedPaths = []
@@ -1018,6 +1042,8 @@ const toApplicantRecord = (profile) => {
     pwd_id_front_file_path: text(registration.pwd_id_front_file_path),
     pwd_id_back_file_path: text(registration.pwd_id_back_file_path),
     resume_file_path: text(registration.resume_file_path),
+    resume_storage_path: text(registration.resume_storage_path),
+    resume_file_name: text(registration.resume_file_name),
     sort_order: Number.isFinite(sortOrder) ? sortOrder : null,
     name: applicantName,
     email: applicantEmail,
@@ -2921,6 +2947,9 @@ export const updateApplicantProfileDetails = async (applicantId, payload = {}) =
       pwd_id_number: text(payload.pwd_id_number) || text(currentRegistration.pwd_id_number),
       avatar: text(payload.avatar) || text(currentRegistration.avatar),
       avatar_path: text(payload.avatar_path) || text(currentRegistration.avatar_path),
+      resume_file_path: text(payload.resume_file_path) || text(currentRegistration.resume_file_path),
+      resume_storage_path: text(payload.resume_storage_path) || text(currentRegistration.resume_storage_path),
+      resume_file_name: text(payload.resume_file_name) || text(currentRegistration.resume_file_name),
     },
   }))
 

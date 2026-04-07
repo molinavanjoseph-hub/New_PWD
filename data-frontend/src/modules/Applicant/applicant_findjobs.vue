@@ -16,7 +16,9 @@ const props = defineProps({
   applicantJobSortMode: { type: String, default: 'match' },
   applicantJobSortLabel: { type: String, default: 'Strongest match' },
   applicantJobSortOptions: { type: Array, default: () => [] },
+  disableCardAnimations: { type: Boolean, default: false },
   resolveApplicantJobApplicationState: { type: Function, default: null },
+  isApplicantJobSaved: { type: Function, default: null },
   onSetApplicantJobFilterMode: { type: Function, default: null },
   onSetApplicantJobPwdType: { type: Function, default: null },
   onSetApplicantJobSalaryRange: { type: Function, default: null },
@@ -40,12 +42,17 @@ const isApplicantJobFilterMenuOpen = ref(false)
 const isApplicantJobSortMenuOpen = ref(false)
 
 const onCardBeforeEnter = (el) => {
+  if (props.disableCardAnimations) return
   el.style.opacity = '0'
   el.style.transform = 'translateY(1.2rem) scale(0.97)'
   el.style.filter = 'blur(2px)'
 }
 
 const onCardEnter = (el, done) => {
+  if (props.disableCardAnimations) {
+    done()
+    return
+  }
   const index = Number(el.dataset.cardIndex || 0)
   const delay = index * 55
   el.style.transition = `opacity 0.36s cubic-bezier(0.22,1,0.36,1) ${delay}ms, transform 0.4s cubic-bezier(0.22,1,0.36,1) ${delay}ms, filter 0.32s ease ${delay}ms`
@@ -65,6 +72,10 @@ const onCardEnter = (el, done) => {
 }
 
 const onCardLeave = (el, done) => {
+  if (props.disableCardAnimations) {
+    done()
+    return
+  }
   const index = Number(el.dataset.cardIndex || 0)
   const delay = index * 30
   el.style.transition = `opacity 0.22s ease ${delay}ms, transform 0.24s ease ${delay}ms, filter 0.2s ease ${delay}ms`
@@ -103,6 +114,8 @@ const getApplicantJobApplicationState = (job) => {
     ...(props.resolveApplicantJobApplicationState(job) || {}),
   }
 }
+const isApplicantJobSavedState = (job) =>
+  typeof props.isApplicantJobSaved === 'function' ? props.isApplicantJobSaved(job) === true : false
 const displayedFindJob = ref(props.selectedFindJob)
 const stagedFindJob = ref(props.selectedFindJob)
 const selectedFindJobApplicationState = computed(() => getApplicantJobApplicationState(displayedFindJob.value))
@@ -188,17 +201,23 @@ onBeforeUnmount(() => {
   clearDetailSelectionFrame()
 })
 
-const formatApplicantJobCardPostedDate = (job) => {
+const formatApplicantJobPostedDateTime = (job) => {
   const createdAtMs = Number(job?.createdAtMs || 0)
   if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) {
     return String(job?.postedDate || 'Recently posted').trim() || 'Recently posted'
   }
 
-  return new Date(createdAtMs).toLocaleDateString('en-US', {
-    month: 'long',
+  const createdAt = new Date(createdAtMs)
+  const timeLabel = createdAt.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  const dateLabel = createdAt.toLocaleDateString('en-US', {
+    month: 'short',
     day: 'numeric',
     year: 'numeric',
   })
+  return `${timeLabel} • ${dateLabel}`
 }
 const formatApplicantVacancyCount = (count) => {
   const normalizedCount = Math.max(0, Number(count || 0) || 0)
@@ -411,38 +430,38 @@ const resetApplicantJobFilters = () => {
                   <button
                     type="button"
                     class="applicant-job-card__bookmark"
+                    :class="{ 'is-saved': isApplicantJobSavedState(job) }"
                     :aria-label="`Save ${job.title}`"
                     @click.stop="$emit('save-applicant-job', job)"
                   >
-                    <i class="bi bi-bookmark" />
+                    <i :class="isApplicantJobSavedState(job) ? 'bi bi-bookmark-fill' : 'bi bi-bookmark'" />
                   </button>
                 </div>
 
                 <p class="applicant-job-card__description">{{ job.description }}</p>
 
                 <div class="applicant-job-card__meta">
-                  <span class="applicant-job-card__pill">
+                  <span class="applicant-job-card__pill applicant-job-card__pill--meta">
                     <i class="bi bi-geo-alt" />
                     {{ job.location }}
                   </span>
-                  <span class="applicant-job-card__pill">
+                  <span class="applicant-job-card__pill applicant-job-card__pill--meta">
                     <i class="bi bi-briefcase" />
                     {{ job.setup }}
                   </span>
-                  <span class="applicant-job-card__pill">
+                  <span class="applicant-job-card__pill applicant-job-card__pill--meta">
                     <i class="bi bi-people" />
                     {{ formatApplicantVacancyCount(job.vacancies) }}
-                  </span>
-                  <span class="applicant-job-card__pill applicant-job-card__pill--salary">
-                    <i class="bi bi-cash-stack" />
-                    {{ job.salary }}
                   </span>
                 </div>
 
                 <div class="applicant-job-card__footer">
+                  <span class="applicant-job-card__pill applicant-job-card__pill--salary">
+                    <i class="bi bi-cash-stack" />
+                    {{ job.salary }}
+                  </span>
                   <span class="applicant-job-card__pill applicant-job-card__pill--date">
-                    <i class="bi bi-clock" />
-                    {{ formatApplicantJobCardPostedDate(job) }}
+                    {{ formatApplicantJobPostedDateTime(job) }}
                   </span>
                 </div>
               </article>
@@ -469,7 +488,7 @@ const resetApplicantJobFilters = () => {
                         <i class="bi bi-send-check" /> {{ selectedFindJobApplicationState.statusLabel }}
                       </span>
                       <span class="applicant-find-jobs__badge applicant-find-jobs__badge--posted">
-                        <i class="bi bi-clock-history" /> {{ displayedFindJob.postedDate }}
+                        {{ formatApplicantJobPostedDateTime(displayedFindJob) }}
                       </span>
                     </div>
                   </div>
@@ -597,9 +616,14 @@ const resetApplicantJobFilters = () => {
                     </div>
 
                     <div class="applicant-job-drawer__actions">
-                      <button type="button" class="applicant-job-drawer__action applicant-job-drawer__action--secondary" @click="$emit('save-applicant-job', displayedFindJob)">
-                        <i class="bi bi-bookmark" />
-                        <span>Save</span>
+                      <button
+                        type="button"
+                        class="applicant-job-drawer__action applicant-job-drawer__action--secondary"
+                        :class="{ 'is-saved': isApplicantJobSavedState(displayedFindJob) }"
+                        @click="$emit('save-applicant-job', displayedFindJob)"
+                      >
+                        <i :class="isApplicantJobSavedState(displayedFindJob) ? 'bi bi-bookmark-fill' : 'bi bi-bookmark'" />
+                        <span>{{ isApplicantJobSavedState(displayedFindJob) ? 'Saved Favorite' : 'Save Favorite' }}</span>
                       </button>
                       <button
                         type="button"

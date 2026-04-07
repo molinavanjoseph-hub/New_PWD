@@ -6,7 +6,7 @@ import heroBackground from '@/assets/better02.jpg'
 import heroBackgroundPrimary from '@/assets/bettert01.png'
 import logoPwd from '@/assets/logo-pwd.png'
 import pwdWordmark from '@/assets/pwdlogo.png'
-import { subscribeToPublicJobs } from '@/lib/jobs'
+import { getPublicJobs, subscribeToPublicJobs } from '@/lib/jobs'
 
 // Main landing page state
 const router = useRouter()
@@ -527,6 +527,13 @@ onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   document.addEventListener('click', handleDocumentClick)
   featuredJobPosts.value = []
+  void getPublicJobs()
+    .then((jobs) => {
+      syncFeaturedJobs(jobs)
+    })
+    .finally(() => {
+      isFeaturedJobsLoading.value = false
+    })
   stopPublicJobsSubscription = subscribeToPublicJobs(
     (jobs) => {
       syncFeaturedJobs(jobs)

@@ -109,6 +109,27 @@ const normalizeApplyJobRecord = (record = {}) => ({
   applicantPresentAddress: text(record.applicantPresentAddress || record.applicant_present_address || record.present_address),
   applicantProvincialAddress: text(record.applicantProvincialAddress || record.applicant_provincial_address || record.provincial_address),
   applicantPwdId: text(record.applicantPwdId || record.applicant_pwd_id || record.pwd_id_number),
+  applicantResumeUrl: text(
+    record.applicantResumeUrl
+      || record.applicant_resume_url
+      || record.resumeUrl
+      || record.resume_url
+      || record?.applicant_profile_snapshot?.resume_url,
+  ),
+  applicantResumePath: text(
+    record.applicantResumePath
+      || record.applicant_resume_path
+      || record.resumePath
+      || record.resume_path
+      || record?.applicant_profile_snapshot?.resume_path,
+  ),
+  applicantResumeFileName: text(
+    record.applicantResumeFileName
+      || record.applicant_resume_file_name
+      || record.resumeFileName
+      || record.resume_file_name
+      || record?.applicant_profile_snapshot?.resume_file_name,
+  ),
   interviewSchedule: text(record.interviewSchedule || record.interview_schedule),
   interviewDate: text(record.interviewDate || record.interview_date),
   interviewType: text(record.interviewType || record.interview_type || 'initial') || 'initial',
@@ -128,17 +149,75 @@ const normalizeApplyJobRecord = (record = {}) => ({
   technicalAssessmentScoreValue: Number(record.technicalAssessmentScoreValue ?? record.technical_assessment_score_value ?? 0) || 0,
   technicalAssessmentScoreLabel: text(record.technicalAssessmentScoreLabel || record.technical_assessment_score_label),
   technicalAssessmentSubmittedAt: text(record.technicalAssessmentSubmittedAt || record.technical_assessment_submitted_at),
+  jobOfferId: text(record.jobOfferId || record.job_offer_id || record.offerId || record.offer_id),
+  jobOfferStatus: text(record.jobOfferStatus || record.job_offer_status || record.offerStatus || record.offer_status),
+  jobOfferTitle: text(record.jobOfferTitle || record.job_offer_title || record.offerTitle || record.offer_title),
+  jobOfferLetter: text(record.jobOfferLetter || record.job_offer_letter || record.offerLetter || record.offer_letter),
+  jobOfferCompensation: text(
+    record.jobOfferCompensation || record.job_offer_compensation || record.compensation || record.salary || record.salary_range,
+  ),
+  jobOfferStartDate: text(record.jobOfferStartDate || record.job_offer_start_date || record.startDate || record.start_date),
+  jobOfferResponseDeadline: text(
+    record.jobOfferResponseDeadline || record.job_offer_response_deadline || record.responseDeadline || record.response_deadline,
+  ),
+  jobOfferInterviewType: text(
+    record.jobOfferInterviewType || record.job_offer_interview_type || record.offerInterviewType || record.offer_interview_type || 'initial',
+  ) || 'initial',
+  jobOfferSentAt: timestampText(record.jobOfferSentAt || record.job_offer_sent_at || record.sentAt || record.sent_at),
+  jobOfferCreatedAt: timestampText(
+    record.jobOfferCreatedAt || record.job_offer_created_at || record.offerCreatedAt || record.offer_created_at,
+  ),
+  jobOfferUpdatedAt: timestampText(
+    record.jobOfferUpdatedAt || record.job_offer_updated_at || record.offerUpdatedAt || record.offer_updated_at,
+  ),
+  jobOfferApplicantRespondedAt: timestampText(
+    record.jobOfferApplicantRespondedAt
+      || record.job_offer_applicant_responded_at
+      || record.applicantRespondedAt
+      || record.applicant_responded_at,
+  ),
+  jobOfferApplicantResponseNote: text(
+    record.jobOfferApplicantResponseNote
+      || record.job_offer_applicant_response_note
+      || record.applicantResponseNote
+      || record.applicant_response_note,
+  ),
   rejectionReason: text(record.rejectionReason || record.rejection_reason),
   reviewedBy: text(record.reviewedBy || record.reviewed_by),
   reviewedByName: text(record.reviewedByName || record.reviewed_by_name),
   status: text(record.status || record.application_status || 'pending') || 'pending',
-  appliedAt: timestampText(record.applied_at_server) || text(record.applied_at) || text(record.created_at),
-  createdAt: timestampText(record.created_at_server) || text(record.created_at),
-  updatedAt: timestampText(record.updated_at_server) || text(record.updated_at),
-  statusUpdatedAt: timestampText(record.status_updated_at_server) || text(record.status_updated_at),
-  reviewedAt: timestampText(record.reviewed_at_server) || text(record.reviewed_at),
-  approvedAt: timestampText(record.approved_at_server) || text(record.approved_at),
-  rejectedAt: timestampText(record.rejected_at_server) || text(record.rejected_at),
+  appliedAt:
+    timestampText(record.applied_at_server)
+    || timestampText(record.appliedAt)
+    || text(record.applied_at)
+    || timestampText(record.submittedAt)
+    || text(record.submitted_at)
+    || timestampText(record.createdAt)
+    || text(record.created_at),
+  createdAt:
+    timestampText(record.created_at_server)
+    || timestampText(record.createdAt)
+    || text(record.created_at),
+  updatedAt:
+    timestampText(record.updated_at_server)
+    || timestampText(record.updatedAt)
+    || text(record.updated_at),
+  statusUpdatedAt:
+    timestampText(record.status_updated_at_server)
+    || timestampText(record.statusUpdatedAt)
+    || text(record.status_updated_at),
+  reviewedAt:
+    timestampText(record.reviewed_at_server)
+    || timestampText(record.reviewedAt)
+    || text(record.reviewed_at),
+  approvedAt:
+    timestampText(record.approved_at_server)
+    || timestampText(record.approvedAt)
+    || text(record.approved_at),
+  rejectedAt:
+    timestampText(record.rejected_at_server)
+    || timestampText(record.rejectedAt)
+    || text(record.rejected_at),
 })
 const sortApplicationsByRecent = (records = []) =>
   [...records].sort((left, right) => {
@@ -183,6 +262,9 @@ const buildApplicationApplicantSnapshot = (record = {}) =>
     present_address: text(record.applicantPresentAddress || record.applicant_present_address),
     provincial_address: text(record.applicantProvincialAddress || record.applicant_provincial_address),
     pwd_id: text(record.applicantPwdId || record.applicant_pwd_id),
+    resume_url: text(record.applicantResumeUrl || record.applicant_resume_url),
+    resume_path: text(record.applicantResumePath || record.applicant_resume_path),
+    resume_file_name: text(record.applicantResumeFileName || record.applicant_resume_file_name),
   })
 const buildApplicationWorkspaceSnapshot = (record = {}) =>
   stripUndefined({
@@ -262,6 +344,9 @@ export const saveApplicantJobApplication = async (payload = {}) => {
       applicant_present_address: normalizedRecord.applicantPresentAddress,
       applicant_provincial_address: normalizedRecord.applicantProvincialAddress,
       applicant_pwd_id: normalizedRecord.applicantPwdId,
+      applicant_resume_url: normalizedRecord.applicantResumeUrl,
+      applicant_resume_path: normalizedRecord.applicantResumePath,
+      applicant_resume_file_name: normalizedRecord.applicantResumeFileName,
       job_snapshot: buildApplicationJobSnapshot(payload),
       applicant_profile_snapshot: buildApplicationApplicantSnapshot(normalizedRecord),
       workspace_owner_snapshot: buildApplicationWorkspaceSnapshot(normalizedRecord),
@@ -489,6 +574,19 @@ export const updateApplicantJobApplicationStatus = async (applicationId, payload
       interview_responded_at: getOptionalText('interviewRespondedAt', 'interview_responded_at'),
       interview_decided_at: getOptionalText('interviewDecidedAt', 'interview_decided_at'),
       interview_schedule_options: getOptionalTextArray('interviewScheduleOptions', 'interview_schedule_options'),
+      job_offer_id: getOptionalText('jobOfferId', 'job_offer_id'),
+      job_offer_status: getOptionalText('jobOfferStatus', 'job_offer_status'),
+      job_offer_title: getOptionalText('jobOfferTitle', 'job_offer_title'),
+      job_offer_letter: getOptionalText('jobOfferLetter', 'job_offer_letter'),
+      job_offer_compensation: getOptionalText('jobOfferCompensation', 'job_offer_compensation'),
+      job_offer_start_date: getOptionalText('jobOfferStartDate', 'job_offer_start_date'),
+      job_offer_response_deadline: getOptionalText('jobOfferResponseDeadline', 'job_offer_response_deadline'),
+      job_offer_interview_type: getOptionalText('jobOfferInterviewType', 'job_offer_interview_type'),
+      job_offer_sent_at: getOptionalText('jobOfferSentAt', 'job_offer_sent_at'),
+      job_offer_created_at: getOptionalText('jobOfferCreatedAt', 'job_offer_created_at'),
+      job_offer_updated_at: getOptionalText('jobOfferUpdatedAt', 'job_offer_updated_at'),
+      job_offer_applicant_responded_at: getOptionalText('jobOfferApplicantRespondedAt', 'job_offer_applicant_responded_at'),
+      job_offer_applicant_response_note: getOptionalText('jobOfferApplicantResponseNote', 'job_offer_applicant_response_note'),
       technical_assessment_status: getOptionalText('technicalAssessmentStatus', 'technical_assessment_status'),
       technical_assessment_result: getOptionalText('technicalAssessmentResult', 'technical_assessment_result'),
       technical_assessment_score_value: getOptionalNumber('technicalAssessmentScoreValue', 'technical_assessment_score_value'),

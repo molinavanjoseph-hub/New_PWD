@@ -21,7 +21,7 @@ const {
   requestApproveApplicantManagementApplication,
 } = toRefs(props)
 
-const isApplicantRowClickable = (applicant) => !Boolean(applicant?.isFinalStatus)
+const isApplicantRowClickable = (applicant) => Boolean(applicant?.id)
 
 const openApplicantRowDetails = (applicant) => {
   if (!isApplicantRowClickable(applicant)) return
@@ -124,8 +124,8 @@ const handleApplicantRowKeydown = (event, applicant) => {
                         v-for="(applicant, index) in filteredApplicantManagementRows"
                         :key="`${applicant.id}-${applicant.email}-${index}`"
                         class="business-applicants__table-row"
-                        :class="{ 'is-clickable': !applicant.isFinalStatus }"
-                        :tabindex="!applicant.isFinalStatus ? 0 : undefined"
+                        :class="{ 'is-clickable': isApplicantRowClickable(applicant) }"
+                        :tabindex="isApplicantRowClickable(applicant) ? 0 : undefined"
                         @click="openApplicantRowDetails(applicant)"
                         @keydown="handleApplicantRowKeydown($event, applicant)"
                       >
@@ -203,7 +203,7 @@ const handleApplicantRowKeydown = (event, applicant) => {
                               :class="`is-${applicant.finalAction.tone}`"
                               :title="applicant.finalAction.label"
                               :aria-label="applicant.finalAction.label"
-                              disabled
+                              @click.stop="openApplicantManagementDecision(applicant.id, 'view')"
                             >
                               <i :class="applicant.finalAction.icon" aria-hidden="true" />
                             </button>

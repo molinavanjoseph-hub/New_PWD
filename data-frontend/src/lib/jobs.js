@@ -24,6 +24,17 @@ const text = (value) => String(value || '').trim()
 const normalizeEmail = (value) => text(value).toLowerCase()
 const waitForAuthReady = () =>
   typeof auth.authStateReady === 'function' ? auth.authStateReady() : Promise.resolve()
+const uniqueTextValues = (values = []) => [...new Set(values.map((value) => text(value)).filter(Boolean))]
+const chunkValues = (values = [], size = 10) => {
+  const normalizedSize = Math.max(1, Number(size) || 1)
+  const chunks = []
+
+  for (let index = 0; index < values.length; index += normalizedSize) {
+    chunks.push(values.slice(index, index + normalizedSize))
+  }
+
+  return chunks
+}
 
 const timestampText = (value) => {
   if (!value) return ''
@@ -82,20 +93,30 @@ const filterPublicJobs = (jobs = []) =>
 
 const normalizeJobRecord = (raw) => {
   const id = text(raw?.id)
-  const title = text(raw?.title)
+  const title = text(raw?.title || raw?.jobTitle || raw?.job_title || raw?.position)
 
   if (!id || !title) return null
 
   const city = text(raw?.city)
   const barangay = text(raw?.barangay)
   const location = text(raw?.location || [city, barangay].filter(Boolean).join(', ') || 'Not specified')
-  const createdAt = timestampText(raw?.createdAt || raw?.created_at || raw?.postedAt)
+  const createdAt = timestampText(raw?.createdAt || raw?.created_at || raw?.postedAt || raw?.posted_at)
   const updatedAt = timestampText(raw?.updatedAt || raw?.updated_at || createdAt)
 
   return {
     id,
     title,
-    companyName: text(raw?.companyName || raw?.company_name || raw?.company || raw?.department || 'Company'),
+    companyName: text(
+      raw?.companyName
+      || raw?.company_name
+      || raw?.company
+      || raw?.department
+      || raw?.businessName
+      || raw?.business_name
+      || raw?.workspaceOwnerName
+      || raw?.workspace_owner_name
+      || 'Company',
+    ),
     logoUrl: mediaUrl(raw?.logoUrl || raw?.companyLogoUrl || raw?.profileImageUrl || ''),
     location,
     city,
@@ -116,11 +137,11 @@ const normalizeJobRecord = (raw) => {
     preferredAgeRange: text(raw?.preferredAgeRange || raw?.preferred_age_range || 'Not specified'),
     createdAt,
     updatedAt,
-    status: normalizeJobStatus(raw?.status),
-    workspaceOwnerId: text(raw?.workspace_owner_id || raw?.workspaceOwnerId),
-    workspaceOwnerEmail: normalizeEmail(raw?.workspace_owner_email || raw?.workspaceOwnerEmail),
-    employerId: text(raw?.employer_id || raw?.employerId),
-    createdBy: text(raw?.created_by || raw?.createdBy),
+    status: normalizeJobStatus(raw?.status || raw?.jobStatus || raw?.job_status || raw?.publicationStatus),
+    workspaceOwnerId: text(raw?.workspace_owner_id || raw?.workspaceOwnerId || raw?.employer_id || raw?.employerId || raw?.created_by || raw?.createdBy),
+    workspaceOwnerEmail: normalizeEmail(raw?.workspace_owner_email || raw?.workspaceOwnerEmail || raw?.owner_email || raw?.ownerEmail),
+    employerId: text(raw?.employer_id || raw?.employerId || raw?.created_by || raw?.createdBy),
+    createdBy: text(raw?.created_by || raw?.createdBy || raw?.employer_id || raw?.employerId),
   }
 }
 
@@ -159,6 +180,13 @@ const syncCachedPublicJob = (job) => {
 const removeCachedPublicJob = (jobId) => {
   cacheJobs(filterPublicJobs(getCachedJobs().filter((job) => job.id !== text(jobId))))
 }
+const canUseDirectBusinessJobWriteFallback = (workspaceOwnerId, actorIds = []) => {
+  const currentUid = text(auth?.currentUser?.uid)
+  if (!currentUid) return false
+
+  const authorizedIds = uniqueTextValues([workspaceOwnerId, ...actorIds])
+  return authorizedIds.includes(currentUid)
+}
 
 const toJobDocument = (payload = {}, options = {}) => {
   const existingJob = options?.existingJob && typeof options.existingJob === 'object'
@@ -170,6 +198,7 @@ const toJobDocument = (payload = {}, options = {}) => {
         ...payload,
       }
     : payload
+  const firebaseUid = text(auth.currentUser?.uid)
   const title = text(source?.title)
   const companyName = text(source?.companyName || source?.company_name)
   const description = text(source?.description)
@@ -180,15 +209,9 @@ const toJobDocument = (payload = {}, options = {}) => {
   const salary = text(source?.salary || source?.salaryRange)
   const disabilityType = text(source?.disabilityType)
   const preferredAgeRange = text(source?.preferredAgeRange)
-  const workspaceOwnerId = text(source?.workspaceOwnerId || source?.workspace_owner_id)
-  const createdBy = text(
-    existingJob?.createdBy
-    || existingJob?.created_by
-    || source?.createdBy
-    || source?.created_by
-    || source?.employerId
-    || source?.employer_id,
-  )
+  const workspaceOwnerId = text(source?.workspaceOwnerId || source?.workspace_owner_id || firebaseUid)
+  const createdBy = text(existingJob?.createdBy || existingJob?.created_by || firebaseUid || source?.createdBy || source?.created_by || source?.employerId || source?.employer_id)
+  const employerId = text(firebaseUid || source?.employerId || source?.employer_id || existingJob?.employerId || existingJob?.employer_id || createdBy)
 
   if (
     !title
@@ -203,6 +226,7 @@ const toJobDocument = (payload = {}, options = {}) => {
     || !preferredAgeRange
     || !workspaceOwnerId
     || !createdBy
+    || !employerId
   ) {
     throw new Error('Please complete all required job post details before saving.')
   }
@@ -241,7 +265,7 @@ const toJobDocument = (payload = {}, options = {}) => {
     updated_at: now,
     workspace_owner_id: workspaceOwnerId,
     workspace_owner_email: normalizeEmail(source?.workspaceOwnerEmail || source?.workspace_owner_email),
-    employer_id: text(existingJob?.employerId || existingJob?.employer_id || source?.employerId || source?.employer_id || createdBy),
+    employer_id: employerId,
     created_by: createdBy,
   }
 }
@@ -284,6 +308,10 @@ const shouldTryManagedJobFunctionFallback = (error) => {
     'unimplemented',
     'functions/unavailable',
     'unavailable',
+    'functions/deadline-exceeded',
+    'deadline-exceeded',
+    'functions/timeout',
+    'timeout',
   ].includes(code)
 }
 
@@ -331,14 +359,13 @@ const deleteBusinessJobPostViaFunction = async (jobId, options = {}) => {
 
 export const getPublicJobs = async () => {
   try {
-    const snapshot = await getDocs(
-      query(collection(db, JOBS_COLLECTION), where('status', '==', PUBLIC_JOB_STATUS)),
-    )
+    await waitForAuthReady()
+    const snapshot = await getDocs(collection(db, JOBS_COLLECTION))
     const firestoreJobs = filterPublicJobs(mapSnapshotToJobs(snapshot.docs))
     cacheJobs(firestoreJobs)
     return firestoreJobs
   } catch {
-    return []
+    return getCachedJobs()
   }
 }
 
@@ -351,18 +378,46 @@ export const getAllJobs = async () => {
   }
 }
 
-export const subscribeToPublicJobs = (handleNext, handleError) =>
-  onSnapshot(
-    query(collection(db, JOBS_COLLECTION), where('status', '==', PUBLIC_JOB_STATUS)),
-    (snapshot) => {
-      const jobs = filterPublicJobs(mapSnapshotToJobs(snapshot.docs))
-      cacheJobs(jobs)
-      if (typeof handleNext === 'function') handleNext(jobs)
-    },
-    (error) => {
+export const subscribeToPublicJobs = (handleNext, handleError) => {
+  let isClosed = false
+  let stopSnapshot = null
+
+  const emitCachedJobs = () => {
+    if (isClosed || typeof handleNext !== 'function') return
+    handleNext(getCachedJobs())
+  }
+
+  emitCachedJobs()
+
+  void waitForAuthReady()
+    .then(() => {
+      if (isClosed) return
+
+      stopSnapshot = onSnapshot(
+        collection(db, JOBS_COLLECTION),
+        (snapshot) => {
+          const jobs = filterPublicJobs(mapSnapshotToJobs(snapshot.docs))
+          cacheJobs(jobs)
+          if (typeof handleNext === 'function') handleNext(jobs)
+        },
+        (error) => {
+          emitCachedJobs()
+          if (typeof handleError === 'function') handleError(error)
+        },
+      )
+    })
+    .catch((error) => {
+      emitCachedJobs()
       if (typeof handleError === 'function') handleError(error)
-    },
-  )
+    })
+
+  return () => {
+    isClosed = true
+    if (typeof stopSnapshot === 'function') {
+      stopSnapshot()
+    }
+  }
+}
 
 export const subscribeToAllJobs = (handleNext, handleError) =>
   onSnapshot(
@@ -416,31 +471,140 @@ export const subscribeToJobDocumentStates = (jobIds = [], handleNext, handleErro
   }
 }
 
-export const subscribeToWorkspaceJobs = (workspaceOwnerId, handleNext, handleError) => {
-  const normalizedWorkspaceOwnerId = text(workspaceOwnerId)
+const normalizeWorkspaceJobSubscriptionTargets = (input = {}) => {
+  if (typeof input === 'string') {
+    return {
+      ownerIds: uniqueTextValues([input]),
+      actorIds: [],
+      ownerEmails: [],
+    }
+  }
 
-  if (!normalizedWorkspaceOwnerId) {
+  const workspaceOwnerId = text(input?.workspaceOwnerId || input?.ownerId)
+  const ownerIds = uniqueTextValues([
+    workspaceOwnerId,
+    ...(Array.isArray(input?.ownerIds) ? input.ownerIds : []),
+  ])
+  const actorIds = uniqueTextValues([
+    input?.actorId,
+    ...(Array.isArray(input?.actorIds) ? input.actorIds : []),
+  ])
+  const ownerEmails = [...new Set(
+    [
+      input?.workspaceOwnerEmail,
+      input?.ownerEmail,
+      ...(Array.isArray(input?.ownerEmails) ? input.ownerEmails : []),
+    ]
+      .map((value) => normalizeEmail(value))
+      .filter(Boolean),
+  )]
+
+  return {
+    ownerIds,
+    actorIds,
+    ownerEmails,
+  }
+}
+
+const buildWorkspaceJobSubscriptionQueries = ({ ownerIds = [], actorIds = [], ownerEmails = [] } = {}) => {
+  const queries = []
+  const jobsCollectionRef = collection(db, JOBS_COLLECTION)
+
+  chunkValues(uniqueTextValues(ownerIds), 10).forEach((chunk, index) => {
+    if (!chunk.length) return
+    queries.push({
+      id: `owner-${index}`,
+      ref: query(
+        jobsCollectionRef,
+        where('workspace_owner_id', chunk.length === 1 ? '==' : 'in', chunk.length === 1 ? chunk[0] : chunk),
+      ),
+    })
+  })
+
+  chunkValues(uniqueTextValues(actorIds), 10).forEach((chunk, index) => {
+    if (!chunk.length) return
+    queries.push({
+      id: `creator-${index}`,
+      ref: query(
+        jobsCollectionRef,
+        where('created_by', chunk.length === 1 ? '==' : 'in', chunk.length === 1 ? chunk[0] : chunk),
+      ),
+    })
+    queries.push({
+      id: `employer-${index}`,
+      ref: query(
+        jobsCollectionRef,
+        where('employer_id', chunk.length === 1 ? '==' : 'in', chunk.length === 1 ? chunk[0] : chunk),
+      ),
+    })
+  })
+
+  chunkValues(ownerEmails, 10).forEach((chunk, index) => {
+    if (!chunk.length) return
+    queries.push({
+      id: `owner-email-${index}`,
+      ref: query(
+        jobsCollectionRef,
+        where('workspace_owner_email', chunk.length === 1 ? '==' : 'in', chunk.length === 1 ? chunk[0] : chunk),
+      ),
+    })
+  })
+
+  return queries
+}
+
+export const subscribeToWorkspaceJobs = (workspaceOwnerInput, handleNext, handleError) => {
+  const subscriptionTargets = normalizeWorkspaceJobSubscriptionTargets(workspaceOwnerInput)
+  const subscriptionQueries = buildWorkspaceJobSubscriptionQueries(subscriptionTargets)
+
+  if (!subscriptionQueries.length) {
     if (typeof handleNext === 'function') handleNext([])
     return () => {}
   }
 
-  return onSnapshot(
-    query(
-      collection(db, JOBS_COLLECTION),
-      where('workspace_owner_id', '==', normalizedWorkspaceOwnerId),
-    ),
-    (snapshot) => {
-      const jobs = mapSnapshotToJobs(snapshot.docs)
-      if (typeof handleNext === 'function') handleNext(jobs)
-    },
-    (error) => {
-      if (typeof handleError === 'function') handleError(error)
-    },
-  )
+  const querySnapshots = new Map()
+  const emitJobs = () => {
+    const docsById = new Map()
+    querySnapshots.forEach((docs = []) => {
+      docs.forEach((entry) => {
+        docsById.set(entry.id, entry)
+      })
+    })
+
+    if (typeof handleNext === 'function') {
+      handleNext(mapSnapshotToJobs([...docsById.values()]))
+    }
+  }
+
+  emitJobs()
+
+  const stopHandlers = subscriptionQueries.map(({ id, ref: queryRef }) =>
+    onSnapshot(
+      queryRef,
+      (snapshot) => {
+        querySnapshots.set(id, snapshot.docs)
+        emitJobs()
+      },
+      (error) => {
+        if (typeof handleError === 'function') handleError(error)
+      },
+    ))
+
+  return () => {
+    stopHandlers.forEach((stopHandler) => {
+      if (typeof stopHandler === 'function') {
+        stopHandler()
+      }
+    })
+  }
 }
 
 export const createBusinessJobPost = async (payload = {}) => {
   const jobDocument = toJobDocument(payload)
+  const canUseDirectFallback = canUseDirectBusinessJobWriteFallback(jobDocument.workspace_owner_id, [
+    jobDocument.created_by,
+    jobDocument.employer_id,
+  ])
 
   try {
     const createdJob = await createBusinessJobPostViaFunction(jobDocument)
@@ -461,15 +625,22 @@ export const createBusinessJobPost = async (payload = {}) => {
       throw new Error('Sign in again before publishing a job post.')
     }
 
-    if (functionCode === 'functions/permission-denied') {
-      throw new Error(text(functionError?.message) || 'Your account is not allowed to publish job posts.')
-    }
-
     if (functionCode === 'functions/invalid-argument' || functionCode === 'functions/failed-precondition') {
       throw new Error(text(functionError?.message) || 'Please review the job post details and try again.')
     }
 
-    if (!shouldTryManagedJobFunctionFallback(functionError)) {
+    const shouldUseDirectFallback =
+      canUseDirectFallback
+      && (
+        functionCode === 'functions/permission-denied'
+        || shouldTryManagedJobFunctionFallback(functionError)
+      )
+
+    if (!shouldUseDirectFallback) {
+      if (functionCode === 'functions/permission-denied') {
+        throw new Error(text(functionError?.message) || 'Your account is not allowed to publish job posts.')
+      }
+
       throw new Error(
         toJobsErrorMessage(
           functionError,
@@ -497,6 +668,15 @@ export const createBusinessJobPost = async (payload = {}) => {
 export const updateBusinessJobPost = async (jobId, payload = {}, options = {}) => {
   const normalizedJobId = text(jobId)
   if (!normalizedJobId) throw new Error('Select a job post before saving changes.')
+  const directFallbackWorkspaceOwnerId = text(
+    options?.workspaceOwnerId || payload?.workspaceOwnerId || payload?.workspace_owner_id,
+  )
+  const canUseDirectFallback = canUseDirectBusinessJobWriteFallback(directFallbackWorkspaceOwnerId, [
+    payload?.createdBy,
+    payload?.created_by,
+    payload?.employerId,
+    payload?.employer_id,
+  ])
 
   try {
     const updatedJob = await updateBusinessJobPostViaFunction(normalizedJobId, payload, options)
@@ -514,11 +694,11 @@ export const updateBusinessJobPost = async (jobId, payload = {}, options = {}) =
       throw new Error('Sign in again before updating the job post.')
     }
 
-    if (functionCode === 'functions/permission-denied') {
+    if (functionCode === 'functions/permission-denied' && !canUseDirectFallback) {
       throw new Error(text(functionError?.message) || 'Your account is not allowed to update this job post.')
     }
 
-    if (shouldTryManagedJobFunctionFallback(functionError)) {
+    if (functionCode === 'functions/permission-denied' || shouldTryManagedJobFunctionFallback(functionError)) {
       const snapshot = await getDoc(getJobDocRef(normalizedJobId))
       if (!snapshot.exists()) {
         throw new Error('That job post no longer exists.')

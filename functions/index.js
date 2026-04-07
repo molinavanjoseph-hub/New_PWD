@@ -221,6 +221,7 @@ const assertSignedInRequest = (request, fallbackMessage = 'Sign in before contin
 }
 
 const normalizeCallableJobRecord = (jobId, rawData = {}, requesterUid = '') => {
+  const normalizedRequesterUid = text(requesterUid)
   const title = text(rawData?.title)
   const companyName = text(rawData?.companyName || rawData?.company_name)
   const description = text(rawData?.description)
@@ -234,10 +235,10 @@ const normalizeCallableJobRecord = (jobId, rawData = {}, requesterUid = '') => {
   const salaryRange = text(rawData?.salaryRange || salary)
   const disabilityType = text(rawData?.disabilityType)
   const preferredAgeRange = text(rawData?.preferredAgeRange)
-  const workspaceOwnerId = text(rawData?.workspaceOwnerId || rawData?.workspace_owner_id || requesterUid)
+  const workspaceOwnerId = text(rawData?.workspaceOwnerId || rawData?.workspace_owner_id || normalizedRequesterUid)
   const workspaceOwnerEmail = normalizeEmail(rawData?.workspaceOwnerEmail || rawData?.workspace_owner_email)
-  const employerId = text(rawData?.employerId || rawData?.employer_id || requesterUid)
-  const createdBy = text(rawData?.createdBy || rawData?.created_by || requesterUid)
+  const employerId = text(normalizedRequesterUid || rawData?.employerId || rawData?.employer_id || workspaceOwnerId)
+  const createdBy = text(normalizedRequesterUid || rawData?.createdBy || rawData?.created_by || employerId)
   const vacancies = Math.max(1, Number(rawData?.vacancies || 1) || 1)
   const qualifications = Array.isArray(rawData?.qualifications)
     ? rawData.qualifications.map((entry) => text(entry)).filter(Boolean)

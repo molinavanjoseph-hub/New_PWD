@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { collection, getDocs, query, where } from 'firebase/firestore'
 import AppToast from '@/components/AppToast.vue'
@@ -22,6 +22,7 @@ import {
   subscribeToStoredAuthUserProfile,
   updateApplicantProfileDetails,
   uploadApplicantProfileAvatar,
+  uploadApplicantResume,
 } from '@/lib/auth'
 import { auth, db } from '@/firebase'
 import {
@@ -41,9 +42,17 @@ import { mediaUrl } from '@/lib/media'
 
 const router = useRouter()
 const activeSection = ref('find-jobs')
+const applicantProfilePreferredPage = ref('profile')
 const authUser = ref(null)
+const isApplicantMobileViewport = ref(false)
+const isApplicantMobileSidebarOpen = ref(false)
+const applicantMainRef = ref(null)
 const applicantRealtimeNow = ref(Date.now())
 const APPLICANT_REALTIME_UI_REFRESH_MS = 60 * 1000
+const APPLICANT_MOBILE_LAYOUT_QUERY = '(max-width: 1080px)'
+const APPLICANT_MOBILE_NAV_LOCK_CLASS = 'applicant-mobile-nav-open'
+const APPLICANT_SEEN_NOTIFICATION_STORAGE_KEY = 'applicantSeenNotificationIds'
+const APPLICANT_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY = 'applicantDeliveredNotificationToastIds'
 const banNotice = ref(null)
 const isLogoutConfirmOpen = ref(false)
 const isLogoutSubmitting = ref(false)
@@ -53,18 +62,23 @@ const APPLICANT_WELCOME_TOAST_KEY = 'applicantWelcomeToastName'
 const LOGOUT_TOAST_KEY = 'showLoggedOutToast'
 const welcomeToastName = ref('')
 const toast = ref(null)
+const hasApplicantNotificationFeedHydrated = ref(false)
+const applicantDeliveredNotificationToastIds = ref([])
 const jobsLoading = ref(true)
 const publicJobs = ref([])
 const selectedFindJobId = ref('')
 const findJobsQuery = ref('')
-const applicantJobFilterMode = ref('matched')
+const applicantJobFilterMode = ref('all')
 const applicantJobPwdType = ref('')
 const applicantJobSalaryRange = ref('')
 const applicantJobSortMode = ref('match')
 const viewedApplicantJobIds = ref([])
+const savedApplicantFavoriteBusinesses = ref([])
 const APPLICANT_VIEWED_JOB_POSTS_STORAGE_KEY = 'applicantViewedJobPosts'
+const APPLICANT_SAVED_FAVORITE_BUSINESSES_STORAGE_KEY = 'applicantSavedFavoriteBusinesses'
 const APPLICANT_JOB_FILTER_MODES = ['matched', 'all', 'pwd', 'salary']
 const APPLICANT_JOB_SORT_MODES = ['match', 'newest']
+const MAX_APPLICANT_RESUME_FILE_BYTES = 5_000_000
 const APPLICANT_JOB_SALARY_FILTER_OPTIONS = [
   { value: '', label: 'Choose a salary range' },
   { value: 'under-15000', label: 'Under PHP 15,000', min: 0, max: 14999 },
@@ -113,11 +127,21 @@ const applicantProfileForm = ref({
   pwd_id_number: '',
   avatar: '',
   avatar_path: '',
+  resume_file_path: '',
+  resume_storage_path: '',
+  resume_file_name: '',
 })
 const isApplicantAvatarUploading = ref(false)
+const isApplicantResumeUploading = ref(false)
 const isApplicantProfileSaving = ref(false)
+const isApplicantProfileEditing = ref(false)
 const applicantProfileMessage = ref('')
 const applicantProfileMessageTone = ref('success')
+const isApplicantProfileSaveConfirmOpen = ref(false)
+const isApplicantApplyConfirmOpen = ref(false)
+const pendingApplicantApplyJob = ref(null)
+const isApplicantApplySubmitting = ref(false)
+const applicantApplyConfirmPhase = ref('confirm')
 const activeApplicantContractId = ref('')
 const applicantContractSignatureName = ref('')
 const applicantContractConsentChecked = ref(false)
@@ -128,6 +152,8 @@ let banPollId
 let dashboardEntryTimerId
 let welcomeToastTimerId
 let toastTimerId
+let applicantApplicationFollowupToastTimerId = null
+let applicantApplySuccessTimerId = null
 let stopPublicJobsSubscription = null
 let stopApplicantApplicationsSubscription = null
 let stopApplicantInterviewSchedulesSubscription = null
@@ -136,10 +162,30 @@ let stopApplicantTrainingAssignmentsSubscription = null
 let stopApplicantJobDocumentStatesSubscription = null
 let stopAuthUserProfileSync = null
 let applicantAccessRealtimeTimerId = null
-const APPLICANT_JOBS_LOADING_MIN_MS = 2000
+let applicantMobileViewportQuery = null
+const APPLICANT_JOBS_LOADING_MIN_MS = 650
 let applicantJobsLoadingCycleId = 0
 let applicantJobsLoadingStartedAt = 0
 let applicantJobsLoadingTimerId = null
+
+const APPLICANT_REQUIRED_PROFILE_FIELDS = [
+  { key: 'first_name', label: 'First Name' },
+  { key: 'last_name', label: 'Last Name' },
+  { key: 'sex', label: 'Sex' },
+  { key: 'birth_date', label: 'Birth Date' },
+  { key: 'age', label: 'Age' },
+  { key: 'disability_type', label: 'Disability Type' },
+  { key: 'preferred_language', label: 'Preferred Language' },
+  { key: 'contact_country_code', label: 'Country Code' },
+  { key: 'contact_number', label: 'Mobile Number' },
+  { key: 'pwd_id_number', label: 'PWD ID Number' },
+  { key: 'address_barangay', label: 'Barangay' },
+  { key: 'address_city', label: 'City' },
+  { key: 'address_province', label: 'Province' },
+  { key: 'place_of_birth', label: 'Place of Birth' },
+  { key: 'present_address', label: 'Present Address' },
+  { key: 'provincial_address', label: 'Provincial Address' },
+]
 
 const APPLICANT_MODULE_LABELS = {
   overview: 'Dashboard',
@@ -271,6 +317,21 @@ const activeApplicantApplicationIdSet = computed(() =>
       .filter(Boolean),
   ),
 )
+const visibleApplicantApplicationById = computed(() => {
+  const lookup = new Map()
+
+  visibleApplicantApplications.value.forEach((record) => {
+    const applicationId = getApplicantApplicationRecordId(record)
+    if (!applicationId) return
+
+    const existingRecord = lookup.get(applicationId)
+    if (!existingRecord || getApplicationStatusTimestamp(record) >= getApplicationStatusTimestamp(existingRecord)) {
+      lookup.set(applicationId, record)
+    }
+  })
+
+  return lookup
+})
 const sanitizeSelectedApplicantApplicationIds = (applicationIds = []) =>
   [...new Set((Array.isArray(applicationIds) ? applicationIds : [])
     .map((value) => String(value || '').trim())
@@ -293,6 +354,180 @@ const getToastTitle = (text, kind = 'error') => {
 
 const notify = (text, kind = 'error', title = getToastTitle(text, kind)) => {
   toast.value = { text, kind, title }
+}
+
+const normalizeApplicantNotificationStorageOwner = (value = applicantEmail.value) =>
+  String(value || '').trim().toLowerCase() || 'default'
+
+const resolveApplicantNotificationStorageKey = (baseKey, owner = applicantEmail.value) =>
+  `${String(baseKey || '').trim()}:${normalizeApplicantNotificationStorageOwner(owner)}`
+
+const readApplicantStoredNotificationIds = (baseKey, owner = applicantEmail.value) => {
+  if (typeof window === 'undefined') return []
+
+  try {
+    const storedValue = window.localStorage.getItem(resolveApplicantNotificationStorageKey(baseKey, owner))
+    const parsedValue = storedValue ? JSON.parse(storedValue) : []
+    return Array.isArray(parsedValue)
+      ? parsedValue.map((value) => String(value || '').trim()).filter(Boolean)
+      : []
+  } catch {
+    return []
+  }
+}
+
+const writeApplicantStoredNotificationIds = (baseKey, values = [], owner = applicantEmail.value) => {
+  if (typeof window === 'undefined') return
+
+  try {
+    const normalizedValues = [...new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    )]
+    window.localStorage.setItem(resolveApplicantNotificationStorageKey(baseKey, owner), JSON.stringify(normalizedValues))
+  } catch {
+    // Ignore browser storage errors and keep the notification feed usable.
+  }
+}
+
+const syncApplicantDeliveredNotificationToastIds = (notificationIds = [], owner = applicantEmail.value) => {
+  const normalizedIds = [...new Set(
+    (Array.isArray(notificationIds) ? notificationIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean),
+  )]
+
+  applicantDeliveredNotificationToastIds.value = normalizedIds
+  writeApplicantStoredNotificationIds(APPLICANT_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY, normalizedIds, owner)
+}
+
+const rememberApplicantDeliveredNotificationToastIds = (notificationIds = [], owner = applicantEmail.value) => {
+  syncApplicantDeliveredNotificationToastIds([
+    ...applicantDeliveredNotificationToastIds.value,
+    ...(Array.isArray(notificationIds) ? notificationIds : []),
+  ], owner)
+}
+
+const getApplicantNotificationToastKind = (tone) => {
+  const normalizedTone = String(tone || '').trim().toLowerCase()
+  if (normalizedTone === 'danger') return 'error'
+  if (normalizedTone === 'warning') return 'warning'
+  if (normalizedTone === 'success') return 'success'
+  return 'info'
+}
+
+const isApplicantAutoToastNotification = (notification) =>
+  String(notification?.kind || '').trim() !== 'admin-access-update'
+
+const previewApplicantNotification = (notification) => {
+  const message = String(notification?.copy || notification?.message || notification?.title || '').trim()
+  if (!message) return
+
+  notify(
+    message,
+    getApplicantNotificationToastKind(notification?.tone),
+    String(notification?.title || 'Notification').trim() || 'Notification',
+  )
+}
+
+const notifyApplicantActivity = (notification) => {
+  if (!isApplicantAutoToastNotification(notification)) return
+  const message = String(notification?.copy || notification?.message || '').trim()
+  if (!message) return
+
+  notify(
+    message,
+    getApplicantNotificationToastKind(notification?.tone),
+    String(notification?.title || 'New update').trim() || 'New update',
+  )
+}
+
+const playApplicantApplySuccessTone = () => {
+  if (typeof window === 'undefined') return
+
+  const AudioContextConstructor = window.AudioContext || window.webkitAudioContext
+  if (typeof AudioContextConstructor !== 'function') return
+
+  try {
+    const audioContext = new AudioContextConstructor()
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+    const startAt = audioContext.currentTime
+
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(523.25, startAt)
+    oscillator.frequency.linearRampToValueAtTime(659.25, startAt + 0.12)
+    oscillator.frequency.linearRampToValueAtTime(783.99, startAt + 0.24)
+
+    gainNode.gain.setValueAtTime(0.0001, startAt)
+    gainNode.gain.linearRampToValueAtTime(0.055, startAt + 0.03)
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.36)
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+    oscillator.start(startAt)
+    oscillator.stop(startAt + 0.36)
+    oscillator.onended = () => {
+      void audioContext.close().catch(() => {})
+    }
+  } catch {
+    // Ignore browser audio restrictions and keep the apply flow smooth.
+  }
+}
+
+const resetApplicantApplyConfirmState = () => {
+  window.clearTimeout(applicantApplySuccessTimerId)
+  applicantApplySuccessTimerId = null
+  applicantApplyConfirmPhase.value = 'confirm'
+  isApplicantApplyConfirmOpen.value = false
+  pendingApplicantApplyJob.value = null
+}
+
+const setApplicantMobileNavLock = (isLocked) => {
+  if (typeof document === 'undefined') return
+  document.documentElement.classList.toggle(APPLICANT_MOBILE_NAV_LOCK_CLASS, isLocked)
+  document.body.classList.toggle(APPLICANT_MOBILE_NAV_LOCK_CLASS, isLocked)
+}
+
+const syncApplicantMobileViewport = (matches) => {
+  isApplicantMobileViewport.value = Boolean(matches)
+  if (!isApplicantMobileViewport.value) {
+    isApplicantMobileSidebarOpen.value = false
+    setApplicantMobileNavLock(false)
+  }
+}
+
+const handleApplicantMobileViewportChange = (event) => {
+  syncApplicantMobileViewport(Boolean(event?.matches))
+}
+
+const toggleApplicantMobileSidebar = () => {
+  if (!isApplicantMobileViewport.value) return
+  isApplicantMobileSidebarOpen.value = !isApplicantMobileSidebarOpen.value
+  setApplicantMobileNavLock(isApplicantMobileSidebarOpen.value)
+}
+
+const closeApplicantMobileSidebar = () => {
+  isApplicantMobileSidebarOpen.value = false
+  setApplicantMobileNavLock(false)
+}
+
+const resetApplicantContentScroll = () => {
+  if (typeof window !== 'undefined' && isApplicantMobileViewport.value) {
+    window.scrollTo(0, 0)
+  }
+
+  const mainElement = applicantMainRef.value
+  if (!mainElement) return
+
+  if (typeof mainElement.scrollTo === 'function') {
+    mainElement.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+    return
+  }
+
+  mainElement.scrollTop = 0
+  mainElement.scrollLeft = 0
 }
 
 const clearApplicantJobsLoadingTimer = () => {
@@ -375,13 +610,40 @@ const closeApplicantSettings = (nextSection = '') => {
     : resolveApplicantSettingsReturnSection()
 }
 
-const openPersonalization = () => {
+const normalizeApplicantProfilePage = (value) => {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  return ['profile', 'address', 'resume'].includes(normalizedValue) ? normalizedValue : 'profile'
+}
+
+const openPersonalization = (page = 'profile') => {
   if (!canViewApplicantModule('profile')) {
     notify('Profile access is currently disabled by admin RBAC.', 'warning', 'Access unavailable')
     return
   }
+  closeApplicantMobileSidebar()
   isApplicantSettingsModalOpen.value = false
+  isApplicantProfileSaveConfirmOpen.value = false
+  applicantProfilePreferredPage.value = normalizeApplicantProfilePage(page)
+  isApplicantProfileEditing.value = false
   activeSection.value = 'profile'
+}
+
+const startApplicantProfileEdit = () => {
+  if (!canViewApplicantModule('profile')) {
+    notify('Profile access is currently disabled by admin RBAC.', 'warning', 'Access unavailable')
+    return
+  }
+
+  isApplicantProfileSaveConfirmOpen.value = false
+  setApplicantProfileMessage('')
+  isApplicantProfileEditing.value = true
+}
+
+const cancelApplicantProfileEdit = () => {
+  syncApplicantProfileForm(authUser.value)
+  isApplicantProfileSaveConfirmOpen.value = false
+  setApplicantProfileMessage('')
+  isApplicantProfileEditing.value = false
 }
 
 const openApplicantSettings = () => {
@@ -389,7 +651,9 @@ const openApplicantSettings = () => {
     notify('Settings access is currently disabled by admin RBAC.', 'warning', 'Access unavailable')
     return
   }
+  closeApplicantMobileSidebar()
   rememberApplicantSettingsReturnSection()
+  isApplicantProfileSaveConfirmOpen.value = false
   isApplicantSettingsModalOpen.value = true
   activeSection.value = 'settings'
 }
@@ -398,8 +662,10 @@ const selectSection = (sectionId) => {
   const targetSection = String(sectionId || '').trim()
   if (!targetSection) return
 
+  closeApplicantMobileSidebar()
+
   if (targetSection === 'profile') {
-    openPersonalization()
+    openPersonalization('profile')
     return
   }
 
@@ -409,6 +675,13 @@ const selectSection = (sectionId) => {
   }
 
   isApplicantSettingsModalOpen.value = false
+  if (targetSection === activeSection.value) {
+    void nextTick(() => {
+      resetApplicantContentScroll()
+    })
+    return
+  }
+
   if (canViewApplicantModule(targetSection)) {
     activeSection.value = targetSection
     return
@@ -417,20 +690,36 @@ const selectSection = (sectionId) => {
   activeSection.value = resolveFirstAvailableApplicantSection()
 }
 
-const handleApplicantNotificationOpen = (notification) => {
+const handleApplicantNotificationOpen = (notification = {}) => {
   const targetSection = String(notification?.section || '').trim()
+  closeApplicantMobileSidebar()
   if (targetSection === 'settings') {
     openApplicantSettings()
+    previewApplicantNotification(notification)
+    return
+  }
+
+  if (targetSection === 'profile') {
+    if (canViewApplicantModule('profile')) {
+      openPersonalization('profile')
+    } else {
+      activeSection.value = resolveFirstAvailableApplicantSection()
+    }
+    previewApplicantNotification(notification)
     return
   }
 
   if (['applications', 'interviews', 'job-offers', 'contracts', 'technical-assessment', 'find-jobs', 'messages', 'profile', 'settings'].includes(targetSection)
     && canViewApplicantModule(targetSection)) {
     isApplicantSettingsModalOpen.value = false
-    activeSection.value = targetSection
+    if (activeSection.value !== targetSection) {
+      activeSection.value = targetSection
+    }
+    previewApplicantNotification(notification)
     return
   }
 
+  previewApplicantNotification(notification)
   activeSection.value = resolveFirstAvailableApplicantSection()
 }
 
@@ -487,6 +776,31 @@ const applicantAvatarUrl = computed(() => {
   const profileAvatar = authUser.value?.avatar || authUser.value?.avatar_url
   return mediaUrl(String(registrationAvatar || profileAvatar || '').trim())
 })
+const applicantResumeUrl = computed(() =>
+  mediaUrl(String(applicantProfileForm.value.resume_file_path || registration.value?.resume_file_path || '').trim()))
+const applicantResumeFileName = computed(() =>
+  String(applicantProfileForm.value.resume_file_name || registration.value?.resume_file_name || '').trim()
+    || (applicantResumeUrl.value ? 'Uploaded resume.pdf' : ''))
+const applicantHasResume = computed(() => Boolean(String(applicantResumeUrl.value || '').trim()))
+const applicantProfileBaselinePayload = computed(() =>
+  normalizeApplicantProfilePayload(buildApplicantProfileForm(authUser.value)),
+)
+const applicantProfileBaselineInformationPayload = computed(() =>
+  normalizeApplicantProfileInformationPayload(buildApplicantProfileForm(authUser.value)),
+)
+const hasPendingApplicantProfileChanges = computed(() =>
+  serializeApplicantProfilePayload(normalizeApplicantProfilePayload(applicantProfileForm.value))
+    !== serializeApplicantProfilePayload(applicantProfileBaselinePayload.value),
+)
+const hasPendingApplicantAvatarChange = computed(() => {
+  const currentPayload = normalizeApplicantProfilePayload(applicantProfileForm.value)
+  return currentPayload.avatar !== applicantProfileBaselinePayload.value.avatar
+    || currentPayload.avatar_path !== applicantProfileBaselinePayload.value.avatar_path
+})
+const hasPendingApplicantProfileInformationChanges = computed(() =>
+  serializeApplicantProfilePayload(normalizeApplicantProfileInformationPayload(applicantProfileForm.value))
+    !== serializeApplicantProfilePayload(applicantProfileBaselineInformationPayload.value),
+)
 const applicantBarangay = computed(() => registration.value?.address_barangay || 'Not set')
 const applicantDisability = computed(() => registration.value?.disability_type || 'Not set')
 const applicantLanguage = computed(() => registration.value?.preferred_language || 'Not set')
@@ -521,6 +835,7 @@ const applicantProfileSnapshot = computed(() => [
   { id: 'language', label: 'Preferred Language', value: applicantLanguage.value, icon: 'bi bi-translate' },
   { id: 'birth', label: 'Birth Date', value: applicantBirthDate.value, icon: 'bi bi-calendar-heart' },
   { id: 'pwd', label: 'PWD ID Number', value: applicantPwdId.value, icon: 'bi bi-person-vcard' },
+  { id: 'resume', label: 'Resume', value: applicantHasResume.value ? applicantResumeFileName.value : 'Not uploaded', icon: 'bi bi-file-earmark-pdf' },
 ])
 const applicantOverviewHighlights = computed(() => [
   { id: 'employment', label: 'Employment', value: applicantEmploymentStatus.value },
@@ -601,14 +916,14 @@ const _legacyUpcomingInterviews = computed(() => [
     id: 1,
     company: 'Inclusive Business Solutions',
     role: 'Administrative Assistant',
-    schedule: 'Apr 03, 2026 • 10:00 AM',
+    schedule: 'Apr 03, 2026 â€¢ 10:00 AM',
     status: 'Confirmed',
   },
   {
     id: 2,
     company: 'AccessWorks Contact Center',
     role: 'Customer Support Associate',
-    schedule: 'Apr 05, 2026 • 02:30 PM',
+    schedule: 'Apr 05, 2026 â€¢ 02:30 PM',
     status: 'Pending',
   },
 ])
@@ -841,6 +1156,7 @@ const applicantInterviewPageRows = computed(() => {
       id: recordId || `application-interview-${applicationId || interviewType}`,
       applicationId,
       interviewType,
+      logoUrl: getApplicantRelatedBusinessLogoUrl(record, applicationRecord),
       workspaceOwnerName: String(
         record?.workspaceOwnerName
           || record?.workspace_owner_name
@@ -944,7 +1260,67 @@ const buildApplicantProfileForm = (user) => {
     pwd_id_number: String(currentRegistration.pwd_id_number || '').trim(),
     avatar: String(currentRegistration.avatar || profile.avatar || '').trim(),
     avatar_path: String(currentRegistration.avatar_path || profile.avatar_path || '').trim(),
+    resume_file_path: String(currentRegistration.resume_file_path || '').trim(),
+    resume_storage_path: String(currentRegistration.resume_storage_path || '').trim(),
+    resume_file_name: String(currentRegistration.resume_file_name || '').trim(),
   }
+}
+
+const normalizeApplicantProfilePayload = (source = {}) => ({
+  first_name: String(source?.first_name || '').trim(),
+  middle_name: String(source?.middle_name || '').trim(),
+  last_name: String(source?.last_name || '').trim(),
+  sex: String(source?.sex || '').trim(),
+  birth_date: String(source?.birth_date || '').trim(),
+  age: String(source?.age || '').trim(),
+  disability_type: String(source?.disability_type || '').trim(),
+  address_barangay: String(source?.address_barangay || '').trim(),
+  address_city: String(source?.address_city || '').trim(),
+  address_province: String(source?.address_province || '').trim(),
+  present_address: String(source?.present_address || '').trim(),
+  provincial_address: String(source?.provincial_address || '').trim(),
+  place_of_birth: String(source?.place_of_birth || '').trim(),
+  contact_country_code: String(source?.contact_country_code || '+63').trim() || '+63',
+  contact_number: String(source?.contact_number || '').trim(),
+  telephone_number: String(source?.telephone_number || '').trim(),
+  preferred_language: String(source?.preferred_language || '').trim(),
+  pwd_id_number: String(source?.pwd_id_number || '').trim(),
+  avatar: String(source?.avatar || '').trim(),
+  avatar_path: String(source?.avatar_path || '').trim(),
+  resume_file_path: String(source?.resume_file_path || '').trim(),
+  resume_storage_path: String(source?.resume_storage_path || '').trim(),
+  resume_file_name: String(source?.resume_file_name || '').trim(),
+})
+
+const normalizeApplicantProfileInformationPayload = (source = {}) => ({
+  first_name: String(source?.first_name || '').trim(),
+  middle_name: String(source?.middle_name || '').trim(),
+  last_name: String(source?.last_name || '').trim(),
+  sex: String(source?.sex || '').trim(),
+  birth_date: String(source?.birth_date || '').trim(),
+  age: String(source?.age || '').trim(),
+  disability_type: String(source?.disability_type || '').trim(),
+  address_barangay: String(source?.address_barangay || '').trim(),
+  address_city: String(source?.address_city || '').trim(),
+  address_province: String(source?.address_province || '').trim(),
+  present_address: String(source?.present_address || '').trim(),
+  provincial_address: String(source?.provincial_address || '').trim(),
+  place_of_birth: String(source?.place_of_birth || '').trim(),
+  contact_country_code: String(source?.contact_country_code || '+63').trim() || '+63',
+  contact_number: String(source?.contact_number || '').trim(),
+  telephone_number: String(source?.telephone_number || '').trim(),
+  preferred_language: String(source?.preferred_language || '').trim(),
+  pwd_id_number: String(source?.pwd_id_number || '').trim(),
+})
+
+const serializeApplicantProfilePayload = (source = {}) => JSON.stringify(source)
+
+const getApplicantProfileMissingRequiredFields = (source = {}) => {
+  const payload = normalizeApplicantProfileInformationPayload(source)
+
+  return APPLICANT_REQUIRED_PROFILE_FIELDS
+    .filter(({ key }) => !String(payload[key] || '').trim())
+    .map(({ label }) => label)
 }
 
 const syncApplicantProfileForm = (user) => {
@@ -954,6 +1330,38 @@ const syncApplicantProfileForm = (user) => {
 const setApplicantProfileMessage = (message, tone = 'success') => {
   applicantProfileMessage.value = String(message || '').trim()
   applicantProfileMessageTone.value = tone
+}
+
+const syncApplicantStoredProfile = (payload = {}, updatedProfile = {}) => {
+  if (!authUser.value) return
+
+  const currentRegistration = authUser.value?.applicant_registration || authUser.value?.applicantRegistration || {}
+  const nextStoredUser = {
+    ...authUser.value,
+    name: updatedProfile.name || authUser.value.name,
+    avatar: updatedProfile.avatar || payload.avatar || authUser.value.avatar,
+    avatar_path: updatedProfile.avatar_path || payload.avatar_path || authUser.value.avatar_path,
+    applicant_registration: {
+      ...currentRegistration,
+      ...payload,
+    },
+  }
+
+  nextStoredUser.applicantRegistration = nextStoredUser.applicant_registration
+  authUser.value = nextStoredUser
+  setStoredAuthUser(nextStoredUser)
+  syncApplicantProfileForm(nextStoredUser)
+}
+
+const queueApplicantApplicationFollowupToast = (companyLabel) => {
+  window.clearTimeout(applicantApplicationFollowupToastTimerId)
+  applicantApplicationFollowupToastTimerId = window.setTimeout(() => {
+    notify(
+      `Waiting for approval from ${String(companyLabel || 'the business').trim() || 'the business'}.`,
+      'info',
+      'Pending review',
+    )
+  }, 2500)
 }
 
 const toStringList = (value, splitBy) => {
@@ -1213,7 +1621,7 @@ const setApplicantJobSortMode = (value) => {
 }
 
 const resetApplicantJobFilters = () => {
-  applicantJobFilterMode.value = 'matched'
+  applicantJobFilterMode.value = 'all'
   applicantJobPwdType.value = ''
   applicantJobSalaryRange.value = ''
 }
@@ -1277,10 +1685,130 @@ const selectedFindJob = computed(() => {
   if (!selectedFindJobId.value) return null
   return publicJobs.value.find((job) => job.id === selectedFindJobId.value) || null
 })
+const publicApplicantJobById = computed(() => {
+  const lookup = new Map()
+
+  publicJobs.value.forEach((job) => {
+    const jobId = String(job?.id || '').trim()
+    if (jobId) lookup.set(jobId, job)
+  })
+
+  return lookup
+})
+
+const applicantFavoriteBusinessIds = computed(() =>
+  new Set(
+    (Array.isArray(savedApplicantFavoriteBusinesses.value) ? savedApplicantFavoriteBusinesses.value : [])
+      .map((item) => String(item?.id || '').trim().toLowerCase())
+      .filter(Boolean),
+  ),
+)
+
+const sortedApplicantFavoriteBusinesses = computed(() =>
+  [...savedApplicantFavoriteBusinesses.value]
+    .slice()
+    .sort((left, right) => {
+      const rightTimestamp = Date.parse(String(right?.savedAt || '').trim()) || 0
+      const leftTimestamp = Date.parse(String(left?.savedAt || '').trim()) || 0
+      return rightTimestamp - leftTimestamp
+    }),
+)
 
 const getApplicationJobSnapshot = (record) => {
   const snapshot = record?.jobSnapshot || record?.job_snapshot
   return snapshot && typeof snapshot === 'object' ? snapshot : {}
+}
+
+const getApplicantRelatedApplicationRecord = (record = {}) => {
+  const applicationId = String(record?.applicationId || record?.application_id || '').trim()
+  if (!applicationId) return null
+  return visibleApplicantApplicationById.value.get(applicationId) || null
+}
+
+const getApplicantReferenceJobRecord = (record = {}, applicationRecord = null) => {
+  const applicationSnapshot = getApplicationJobSnapshot(applicationRecord)
+  const recordSnapshot = getApplicationJobSnapshot(record)
+  const jobId = String(
+    record?.jobId
+      || record?.job_id
+      || applicationRecord?.jobId
+      || applicationRecord?.job_id
+      || recordSnapshot?.id
+      || applicationSnapshot?.id
+      || '',
+  ).trim()
+
+  if (!jobId) return null
+  return publicApplicantJobById.value.get(jobId) || null
+}
+
+const resolveApplicantBusinessLogoUrl = (...sources) => {
+  const normalizedSources = []
+
+  sources.forEach((source) => {
+    if (!source || typeof source !== 'object') return
+
+    normalizedSources.push(source)
+
+    const jobSnapshot = getApplicationJobSnapshot(source)
+    if (jobSnapshot && Object.keys(jobSnapshot).length) {
+      normalizedSources.push(jobSnapshot)
+    }
+
+    if (source?.employer_profile && typeof source.employer_profile === 'object') {
+      normalizedSources.push(source.employer_profile)
+    }
+  })
+
+  for (const source of normalizedSources) {
+    const nextLogoUrl = [
+      source?.logoUrl,
+      source?.companyLogoUrl,
+      source?.company_logo_url,
+      source?.profileImageUrl,
+      source?.profile_image_url,
+      source?.businessAvatar,
+      source?.business_avatar,
+      source?.businessAvatarUrl,
+      source?.business_avatar_url,
+      source?.workspaceOwnerAvatar,
+      source?.workspace_owner_avatar,
+      source?.workspaceOwnerProfileImageUrl,
+      source?.workspace_owner_profile_image_url,
+      source?.avatarUrl,
+      source?.avatar_url,
+      source?.avatar,
+      source?.photoURL,
+      source?.photo_url,
+    ]
+      .map((value) => normalizeMediaUrl(value))
+      .find(Boolean)
+
+    if (nextLogoUrl) return nextLogoUrl
+  }
+
+  return ''
+}
+
+const getApplicationBusinessLogoUrl = (record = {}) =>
+  resolveApplicantBusinessLogoUrl(
+    record,
+    getApplicationJobSnapshot(record),
+    record?.employer_profile,
+    getApplicantReferenceJobRecord(record),
+  )
+
+const getApplicantRelatedBusinessLogoUrl = (record = {}, applicationRecord = null) => {
+  const matchedApplication = applicationRecord || getApplicantRelatedApplicationRecord(record)
+
+  return resolveApplicantBusinessLogoUrl(
+    record,
+    matchedApplication,
+    getApplicationJobSnapshot(matchedApplication),
+    record?.employer_profile,
+    matchedApplication?.employer_profile,
+    getApplicantReferenceJobRecord(record, matchedApplication),
+  )
 }
 
 const getApplicationCompanyLabel = (record) =>
@@ -1583,6 +2111,7 @@ const buildApplicantInterviewFallbackRecord = (record = {}) => {
     id: `application-interview-${String(record?.id || '').trim()}-${interviewType}`,
     applicationId: String(record?.id || '').trim(),
     workspaceOwnerId: String(record?.workspaceOwnerId || record?.workspace_owner_id || '').trim(),
+    logoUrl: getApplicationBusinessLogoUrl(record),
     workspaceOwnerName: String(
       record?.companyName
         || record?.company_name
@@ -1966,6 +2495,7 @@ const mapApplicantApplicationRecord = (record) => {
     jobId: String(record?.jobId || record?.job_id || '').trim(),
     title,
     company,
+    logoUrl: getApplicationBusinessLogoUrl(record),
     location: getApplicationLocationLabel(record),
     jobType: getApplicationTypeLabel(record),
     salaryLabel: getApplicationSalaryLabel(record),
@@ -1990,6 +2520,7 @@ const mapApplicantApplicationRecord = (record) => {
 const mapApplicantAssessmentAssignmentRecord = (record) => {
   const questions = getApplicantAssessmentQuestions(record)
   const responses = normalizeApplicantAssessmentResponses(record?.responses || record?.assessmentResponses)
+  const linkedApplication = getApplicantRelatedApplicationRecord(record)
   const company = String(record?.companyName || record?.company_name || record?.businessName || record?.business_name || 'Business').trim() || 'Business'
   const jobTitle = String(record?.jobTitle || record?.job_title || record?.role || 'Applied Job').trim() || 'Applied Job'
   const assignedAt = String(record?.assignedAt || record?.assigned_at || '').trim()
@@ -2010,6 +2541,7 @@ const mapApplicantAssessmentAssignmentRecord = (record) => {
     description: String(record?.templateDescription || record?.template_description || '').trim(),
     instructions: String(record?.templateInstructions || record?.template_instructions || '').trim(),
     company,
+    logoUrl: getApplicantRelatedBusinessLogoUrl(record, linkedApplication),
     jobTitle,
     assignedAt,
     assignedAtLabel: formatApplicantAssessmentDate(record?.assignedAt || record?.assigned_at),
@@ -2100,6 +2632,7 @@ const applicantInboxItems = computed(() => {
       return {
         id: `applicant-inbox-application-${String(record?.id || '').trim()}`,
         sender: companyLabel,
+        senderImageUrl: getApplicationBusinessLogoUrl(record),
         senderMeta: jobTitle,
         subject: `${statusLabel}: ${jobTitle}`,
         preview: description,
@@ -2140,6 +2673,7 @@ const applicantInboxItems = computed(() => {
       return {
         id: `applicant-inbox-interview-${String(record?.id || '').trim()}`,
         sender: companyLabel,
+        senderImageUrl: getApplicantRelatedBusinessLogoUrl(record),
         senderMeta: jobTitle,
         subject: `${interviewTypeLabel}: ${jobTitle}`,
         preview: getApplicantInterviewTimelineMeta(record),
@@ -2185,6 +2719,7 @@ const applicantInboxItems = computed(() => {
       return {
         id: `applicant-inbox-assessment-${String(record?.id || '').trim()}`,
         sender: record.company,
+        senderImageUrl: record.logoUrl || getApplicantRelatedBusinessLogoUrl(record),
         senderMeta: record.jobTitle,
         subject: `${record.title}: ${record.jobTitle}`,
         preview,
@@ -2247,9 +2782,6 @@ const applicantInboxItems = computed(() => {
   return [...applicationItems, ...interviewItems, ...assessmentItems, ...accessUpdateItems]
     .sort((left, right) => (right?.createdAtValue || 0) - (left?.createdAtValue || 0))
 })
-
-const seenApplicantAssessmentIds = ref([])
-const hasApplicantAssessmentFeedHydrated = ref(false)
 
 const isApplicantApplicationRecord = (record, applicantId, email) => {
   const candidateValues = [
@@ -2368,12 +2900,83 @@ const resolveApplicantJobApplicationState = (job) => {
   }
 }
 
+const normalizeApplicantJobOfferStatus = (record = {}) =>
+  String(record?.jobOfferStatus || record?.job_offer_status || '').trim().toLowerCase()
+
+const getApplicantJobOfferTimestamp = (record = {}) => {
+  const candidates = [
+    record?.jobOfferApplicantRespondedAt,
+    record?.job_offer_applicant_responded_at,
+    record?.jobOfferUpdatedAt,
+    record?.job_offer_updated_at,
+    record?.jobOfferSentAt,
+    record?.job_offer_sent_at,
+    record?.jobOfferCreatedAt,
+    record?.job_offer_created_at,
+  ]
+
+  for (const value of candidates) {
+    const parsed = Date.parse(String(value || '').trim())
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+
+  return getApplicationStatusTimestamp(record)
+}
+
+const getApplicantJobOfferState = (record = {}) => {
+  const company = getApplicationCompanyLabel(record)
+  const jobTitle = getApplicationJobTitle(record)
+  const applicationStatus = normalizeApplicationStatus(record)
+  const offerStatus = normalizeApplicantJobOfferStatus(record)
+  const responseNote = String(record?.jobOfferApplicantResponseNote || record?.job_offer_applicant_response_note || '').trim()
+  const updatedAtValue = getApplicantJobOfferTimestamp(record)
+
+  if (applicationStatus === 'hired') {
+    return {
+      label: 'Hired',
+      tone: 'success',
+      summary: `${company} confirmed your hiring for ${jobTitle}.`,
+      updatedAtValue,
+    }
+  }
+
+  if (['accepted', 'confirmed', 'signed'].includes(offerStatus) || applicationStatus === 'accepted') {
+    return {
+      label: 'Offer Accepted',
+      tone: 'success',
+      summary: `You accepted the job offer for ${jobTitle} from ${company}.`,
+      updatedAtValue,
+    }
+  }
+
+  if (['declined', 'rejected', 'cancelled', 'canceled', 'expired'].includes(offerStatus)) {
+    return {
+      label: 'Offer Closed',
+      tone: 'danger',
+      summary: responseNote || `${company} closed the job offer for ${jobTitle}.`,
+      updatedAtValue,
+    }
+  }
+
+  if (offerStatus) {
+    return {
+      label: 'Offer Sent',
+      tone: 'accent',
+      summary: `${company} sent a job offer for your ${jobTitle} application.`,
+      updatedAtValue,
+    }
+  }
+
+  return null
+}
+
 const applicantNotifications = computed(() => {
   const accessUpdateItems = applicantAdminAccessNotifications.value
 
   const applicationItems = liveApplicantApplications.value
     .map((record) => {
       const normalizedStatus = normalizeApplicationStatus(record)
+      const jobOfferStatus = normalizeApplicantJobOfferStatus(record)
       const companyLabel = getApplicationCompanyLabel(record)
       const jobTitle = getApplicationJobTitle(record)
       const rejectionReason = String(record?.rejectionReason || record?.rejection_reason || '').trim()
@@ -2404,6 +3007,8 @@ const applicantNotifications = computed(() => {
       }
 
       if (['accepted', 'approved', 'hired'].includes(normalizedStatus)) {
+        if (jobOfferStatus) return null
+
         return {
           id: `application-approved-${record.id}`,
           title: 'Application approved',
@@ -2454,6 +3059,30 @@ const applicantNotifications = computed(() => {
       }
 
       return null
+    })
+    .filter(Boolean)
+
+  const jobOfferItems = liveApplicantApplications.value
+    .map((record) => {
+      const offerState = getApplicantJobOfferState(record)
+      if (!offerState) return null
+
+      const normalizedOfferLabel = String(offerState.label || '').trim().toLowerCase()
+      let title = 'Job offer update'
+      if (normalizedOfferLabel === 'offer sent') title = 'Job offer received'
+      if (normalizedOfferLabel === 'offer accepted') title = 'Job offer accepted'
+      if (normalizedOfferLabel === 'offer closed') title = 'Job offer closed'
+      if (normalizedOfferLabel === 'hired') title = 'Hiring confirmed'
+
+      return {
+        id: `job-offer-${String(record?.id || '').trim()}-${normalizeApplicantJobOfferStatus(record) || normalizeApplicationStatus(record) || 'update'}`,
+        title,
+        copy: offerState.summary,
+        section: 'job-offers',
+        tone: offerState.tone,
+        createdAtValue: offerState.updatedAtValue,
+        timeLabel: formatApplicantNotificationTime(offerState.updatedAtValue),
+      }
     })
     .filter(Boolean)
 
@@ -2541,7 +3170,7 @@ const applicantNotifications = computed(() => {
     })
     .filter(Boolean)
 
-  return [...accessUpdateItems, ...applicationItems, ...interviewItems, ...assessmentItems]
+  return [...accessUpdateItems, ...applicationItems, ...jobOfferItems, ...interviewItems, ...assessmentItems]
     .sort((left, right) => (right?.createdAtValue || 0) - (left?.createdAtValue || 0))
     .slice(0, 8)
 })
@@ -2614,8 +3243,10 @@ const loadApplicantJobs = async () => {
       selectedFindJobId.value = ''
     }
   } catch {
-    publicJobs.value = []
-    selectedFindJobId.value = ''
+    if (!publicJobs.value.length) {
+      publicJobs.value = []
+      selectedFindJobId.value = ''
+    }
   } finally {
     finishApplicantJobsLoading(loadingCycleId)
   }
@@ -2671,31 +3302,35 @@ const applicantApplicationRecords = computed(() =>
 
 const applicantJobOfferRecords = computed(() =>
   visibleApplicantApplications.value
-    .filter((record) => ['accepted', 'hired'].includes(normalizeApplicationStatus(record)))
     .map((record) => {
+      const offerState = getApplicantJobOfferState(record)
+      if (!offerState) return null
+
       const normalizedStatus = normalizeApplicationStatus(record)
       const company = getApplicationCompanyLabel(record)
       const title = getApplicationJobTitle(record)
-      const updatedAtValue = getApplicationStatusTimestamp(record)
+      const updatedAtValue = offerState.updatedAtValue
 
       return {
         id: String(record?.id || `${title}-${company}-${updatedAtValue}`),
         title,
         company,
+        logoUrl: getApplicationBusinessLogoUrl(record),
         location: getApplicationLocationLabel(record),
         jobType: getApplicationTypeLabel(record),
         salaryLabel: getApplicationSalaryLabel(record),
         disabilityLabel: getApplicationDisabilityLabel(record),
         submittedAtLabel: formatApplicationDate(record),
-        updatedAtLabel: formatApplicationStatusDate(record),
+        updatedAtLabel: updatedAtValue
+          ? new Date(updatedAtValue).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
+          : formatApplicationStatusDate(record),
         updatedAtValue,
-        offerLabel: normalizedStatus === 'hired' ? 'Hired' : 'Offer Accepted',
-        offerTone: 'success',
-        offerSummary: normalizedStatus === 'hired'
-          ? `${company} marked your ${title} application as hired.`
-          : `You accepted the job offer for ${title} from ${company}.`,
+        offerLabel: offerState.label,
+        offerTone: offerState.tone,
+        offerSummary: offerState.summary,
       }
     })
+    .filter(Boolean)
     .sort((left, right) => (right.updatedAtValue || 0) - (left.updatedAtValue || 0)),
 )
 
@@ -3110,6 +3745,7 @@ const startApplicantRealtimeSubscriptions = (user) => {
   stopApplicantAssessmentAssignmentsSubscription?.()
   stopApplicantTrainingAssignmentsSubscription?.()
   const loadingCycleId = beginApplicantJobsLoading()
+  void loadApplicantJobs()
 
   stopPublicJobsSubscription = subscribeToPublicJobs(
     (rows) => {
@@ -3122,7 +3758,9 @@ const startApplicantRealtimeSubscriptions = (user) => {
     },
     () => {
       finishApplicantJobsLoading(loadingCycleId)
-      publicJobs.value = []
+      if (!publicJobs.value.length) {
+        void loadApplicantJobs()
+      }
     },
   )
 
@@ -3211,10 +3849,128 @@ const selectFindJob = (jobId) => {
   markApplicantJobViewed(normalizedJobId)
 }
 
+const formatApplicantFavoriteSavedDate = (value) => {
+  const parsedValue = Date.parse(String(value || '').trim())
+  if (!Number.isFinite(parsedValue)) return 'Saved recently'
+
+  return new Date(parsedValue).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  })
+}
+
+const getApplicantFavoriteBusinessKey = (job = {}) =>
+  String(
+    job?.workspaceOwnerId
+      || job?.workspace_owner_id
+      || job?.businessName
+      || job?.business_name
+      || job?.companyName
+      || job?.company
+      || job?.id
+      || '',
+  ).trim().toLowerCase()
+
+const normalizeApplicantFavoriteBusinessRecord = (value = {}) => {
+  const favoriteId = getApplicantFavoriteBusinessKey(value)
+  if (!favoriteId) return null
+
+  const businessName = String(value?.businessName || value?.business_name || value?.companyName || value?.company || 'Business').trim() || 'Business'
+  const savedAt = String(value?.savedAt || '').trim() || new Date().toISOString()
+
+  return {
+    id: favoriteId,
+    businessName,
+    companyName: String(value?.companyName || businessName).trim() || businessName,
+    jobTitle: String(value?.jobTitle || value?.title || 'Open role').trim() || 'Open role',
+    location: String(value?.location || 'Location not specified').trim() || 'Location not specified',
+    workspaceOwnerId: String(value?.workspaceOwnerId || value?.workspace_owner_id || '').trim(),
+    workspaceOwnerName: String(value?.workspaceOwnerName || value?.workspace_owner_name || businessName).trim() || businessName,
+    logoUrl: normalizeMediaUrl(value?.logoUrl || value?.profileImageUrl || value?.avatar || ''),
+    initials: String(value?.initials || getCompanyInitials(businessName)).trim() || getCompanyInitials(businessName),
+    savedAt,
+    savedDateLabel: formatApplicantFavoriteSavedDate(savedAt),
+  }
+}
+
+const buildApplicantFavoriteBusinessRecord = (job = {}) => {
+  const favoriteId = getApplicantFavoriteBusinessKey(job)
+  if (!favoriteId) return null
+
+  const businessName = String(job?.businessName || job?.business_name || job?.companyName || job?.company || 'Business').trim() || 'Business'
+  const savedAt = new Date().toISOString()
+
+  return {
+    id: favoriteId,
+    businessName,
+    companyName: String(job?.companyName || businessName).trim() || businessName,
+    jobTitle: String(job?.title || 'Open role').trim() || 'Open role',
+    location: String(job?.location || 'Location not specified').trim() || 'Location not specified',
+    workspaceOwnerId: String(job?.workspaceOwnerId || job?.workspace_owner_id || '').trim(),
+    workspaceOwnerName: String(job?.workspaceOwnerName || job?.workspace_owner_name || businessName).trim() || businessName,
+    logoUrl: normalizeMediaUrl(job?.logoUrl || job?.profileImageUrl || ''),
+    initials: getCompanyInitials(businessName),
+    savedAt,
+    savedDateLabel: formatApplicantFavoriteSavedDate(savedAt),
+  }
+}
+
+const getApplicantFavoriteBusinessesStorageKey = () => {
+  const identifier = String(authUser.value?.id || authUser.value?.uid || authUser.value?.email || '').trim().toLowerCase()
+  return identifier
+    ? `${APPLICANT_SAVED_FAVORITE_BUSINESSES_STORAGE_KEY}:${identifier}`
+    : APPLICANT_SAVED_FAVORITE_BUSINESSES_STORAGE_KEY
+}
+
+const loadApplicantFavoriteBusinesses = () => {
+  try {
+    const raw = window.localStorage.getItem(getApplicantFavoriteBusinessesStorageKey())
+    const parsed = raw ? JSON.parse(raw) : []
+    savedApplicantFavoriteBusinesses.value = Array.isArray(parsed)
+      ? parsed.map((item) => normalizeApplicantFavoriteBusinessRecord(item)).filter(Boolean)
+      : []
+  } catch {
+    savedApplicantFavoriteBusinesses.value = []
+  }
+}
+
+const persistApplicantFavoriteBusinesses = () => {
+  try {
+    window.localStorage.setItem(
+      getApplicantFavoriteBusinessesStorageKey(),
+      JSON.stringify(savedApplicantFavoriteBusinesses.value),
+    )
+  } catch {
+    // Ignore storage failures and keep the current state in memory.
+  }
+}
+
+const isApplicantJobSaved = (job) => {
+  const favoriteId = getApplicantFavoriteBusinessKey(job)
+  return Boolean(favoriteId) && applicantFavoriteBusinessIds.value.has(favoriteId)
+}
+
 const saveApplicantJob = (job) => {
   const targetJob = job || selectedFindJob.value
   if (!targetJob) return
-  notify(`${targetJob.companyName} saved.`, 'success', 'Saved')
+  const favoriteRecord = buildApplicantFavoriteBusinessRecord(targetJob)
+  if (!favoriteRecord) {
+    notify('This business could not be saved right now.', 'warning', 'Save unavailable')
+    return
+  }
+
+  if (applicantFavoriteBusinessIds.value.has(favoriteRecord.id)) {
+    notify(`${favoriteRecord.businessName} is already in your favorite businesses list.`, 'success', 'Already saved')
+    return
+  }
+
+  savedApplicantFavoriteBusinesses.value = [
+    favoriteRecord,
+    ...savedApplicantFavoriteBusinesses.value.filter((item) => item.id !== favoriteRecord.id),
+  ]
+  persistApplicantFavoriteBusinesses()
+  notify(`${favoriteRecord.businessName} added to your favorite businesses.`, 'success', 'Favorite saved')
 }
 
 const resolveApplicantApplicationPayload = (job) => {
@@ -3258,24 +4014,90 @@ const resolveApplicantApplicationPayload = (job) => {
     applicantPresentAddress: String(currentRegistration.present_address || '').trim(),
     applicantProvincialAddress: String(currentRegistration.provincial_address || '').trim(),
     applicantPwdId: String(currentRegistration.pwd_id_number || '').trim(),
+    applicantResumeUrl: String(
+      applicantProfileForm.value.resume_file_path || currentRegistration.resume_file_path || '',
+    ).trim(),
+    applicantResumePath: String(
+      applicantProfileForm.value.resume_storage_path || currentRegistration.resume_storage_path || '',
+    ).trim(),
+    applicantResumeFileName: String(
+      applicantProfileForm.value.resume_file_name || currentRegistration.resume_file_name || '',
+    ).trim(),
     status: 'pending',
   }
 }
 
-const applyApplicantJob = async (job) => {
+const closeApplicantApplyConfirm = () => {
+  if (isApplicantApplySubmitting.value) return
+  resetApplicantApplyConfirmState()
+}
+
+const applyApplicantJob = (job) => {
   const targetJob = job || selectedFindJob.value
   if (!targetJob) return
   const payload = resolveApplicantApplicationPayload(targetJob)
+  if (!applicantHasResume.value || !payload?.applicantResumeUrl) {
+    if (canViewApplicantModule('profile')) {
+      openPersonalization('resume')
+    }
+    notify('I need your resume before you can apply for jobs.', 'warning', 'Resume required')
+    return
+  }
   if (!payload?.jobId || !payload?.applicantId || !payload?.workspaceOwnerId) {
     notify('This job is missing Firestore business details, so the application cannot be sent yet.', 'warning')
     return
   }
 
+  applicantApplyConfirmPhase.value = 'confirm'
+  pendingApplicantApplyJob.value = targetJob
+  isApplicantApplyConfirmOpen.value = true
+}
+
+const confirmApplicantJobApplication = async () => {
+  const targetJob = pendingApplicantApplyJob.value || selectedFindJob.value
+  if (!targetJob || isApplicantApplySubmitting.value) return
+
+  const payload = resolveApplicantApplicationPayload(targetJob)
+  if (!applicantHasResume.value || !payload?.applicantResumeUrl) {
+    closeApplicantApplyConfirm()
+    if (canViewApplicantModule('profile')) {
+      openPersonalization('resume')
+    }
+    notify('I need your resume before you can apply for jobs.', 'warning', 'Resume required')
+    return
+  }
+  if (!payload?.jobId || !payload?.applicantId || !payload?.workspaceOwnerId) {
+    closeApplicantApplyConfirm()
+    notify('This job is missing Firestore business details, so the application cannot be sent yet.', 'warning')
+    return
+  }
+
+  applicantApplyConfirmPhase.value = 'loading'
+  isApplicantApplySubmitting.value = true
+
   try {
-    await saveApplicantJobApplication(payload)
-    notify(`Application sent for ${targetJob.title}. Your status is now Pending while the business reviews it.`, 'success')
+    const savedApplication = await saveApplicantJobApplication(payload)
+    syncApplicantApplications([
+      savedApplication,
+      ...liveApplicantApplications.value.filter((record) => String(record?.id || '').trim() !== String(savedApplication?.id || '').trim()),
+    ])
+    rememberApplicantDeliveredNotificationToastIds([
+      `application-pending-${String(savedApplication?.id || '').trim()}`,
+    ])
+    applicantApplyConfirmPhase.value = 'success'
+    playApplicantApplySuccessTone()
+
+    await new Promise((resolve) => {
+      applicantApplySuccessTimerId = window.setTimeout(resolve, 950)
+    })
+
+    resetApplicantApplyConfirmState()
+    notify(`Successfully applied for ${targetJob.title}.`, 'success', 'Application submitted')
   } catch (error) {
+    applicantApplyConfirmPhase.value = 'confirm'
     notify(error instanceof Error ? error.message : 'Unable to send your application right now.', 'error')
+  } finally {
+    isApplicantApplySubmitting.value = false
   }
 }
 
@@ -3304,53 +4126,117 @@ const handleApplicantAvatarChange = async (event) => {
   }
 }
 
-const saveApplicantProfile = async () => {
-  if (!authUser.value?.id) return
+const handleApplicantResumeChange = async (event) => {
+  const selectedFile = event?.target?.files?.[0]
+  if (!selectedFile || !authUser.value?.id) return
 
+  setApplicantProfileMessage('')
+
+  const isPdf = selectedFile.type === 'application/pdf' || /\.pdf$/i.test(selectedFile.name)
+  if (!isPdf) {
+    setApplicantProfileMessage('Only PDF resume files are allowed.', 'error')
+    if (event?.target) {
+      event.target.value = ''
+    }
+    return
+  }
+
+  if (selectedFile.size > MAX_APPLICANT_RESUME_FILE_BYTES) {
+    setApplicantProfileMessage('Resume file is too large. Please upload a PDF that is 5MB or smaller.', 'error')
+    if (event?.target) {
+      event.target.value = ''
+    }
+    return
+  }
+
+  isApplicantResumeUploading.value = true
+
+  try {
+    const uploadedResume = await uploadApplicantResume(authUser.value.id, selectedFile)
+    const payload = {
+      resume_file_path: uploadedResume.url,
+      resume_storage_path: uploadedResume.path,
+      resume_file_name: String(selectedFile.name || 'resume.pdf').trim() || 'resume.pdf',
+    }
+    const updatedProfile = await updateApplicantProfileDetails(authUser.value.id, payload)
+    syncApplicantStoredProfile(payload, updatedProfile)
+    setApplicantProfileMessage('Resume uploaded and saved to your profile. You can now apply for jobs.')
+  } catch (error) {
+    setApplicantProfileMessage(error instanceof Error ? error.message : 'Unable to upload your resume right now.', 'error')
+  } finally {
+    isApplicantResumeUploading.value = false
+    if (event?.target) {
+      event.target.value = ''
+    }
+  }
+}
+
+const getApplicantProfileSavePayload = () => {
+  const payload = normalizeApplicantProfilePayload(applicantProfileForm.value)
+  const missingFields = hasPendingApplicantProfileInformationChanges.value
+    ? getApplicantProfileMissingRequiredFields(payload)
+    : []
+
+  if (missingFields.length) {
+    const missingFieldLabel = missingFields.length > 3
+      ? `${missingFields.slice(0, 3).join(', ')}, and more`
+      : missingFields.join(', ')
+    setApplicantProfileMessage(`Complete the required fields before saving: ${missingFieldLabel}.`, 'error')
+    notify(`Complete the required fields first: ${missingFieldLabel}.`, 'warning', 'Required fields')
+    return null
+  }
+
+  return payload
+}
+
+const closeApplicantProfileSaveConfirm = () => {
+  if (isApplicantProfileSaving.value) return
+  isApplicantProfileSaveConfirmOpen.value = false
+}
+
+const requestApplicantProfileSave = () => {
+  if (!authUser.value?.id || isApplicantProfileSaving.value) return
+
+  if (!getApplicantProfileSavePayload()) return
+
+  if (!hasPendingApplicantProfileChanges.value) {
+    isApplicantProfileSaveConfirmOpen.value = false
+    isApplicantProfileEditing.value = false
+    setApplicantProfileMessage('')
+    return
+  }
+
+  isApplicantProfileSaveConfirmOpen.value = true
+}
+
+const saveApplicantProfile = async () => {
+  if (!authUser.value?.id || isApplicantProfileSaving.value) return
+
+  const payload = getApplicantProfileSavePayload()
+  if (!payload) return
+
+  if (!hasPendingApplicantProfileChanges.value) {
+    isApplicantProfileSaveConfirmOpen.value = false
+    isApplicantProfileEditing.value = false
+    setApplicantProfileMessage('')
+    return
+  }
+
+  const isPhotoOnlyUpdate = hasPendingApplicantAvatarChange.value && !hasPendingApplicantProfileInformationChanges.value
+  isApplicantProfileSaveConfirmOpen.value = false
   setApplicantProfileMessage('')
   isApplicantProfileSaving.value = true
 
   try {
-    const payload = {
-      ...applicantProfileForm.value,
-      first_name: applicantProfileForm.value.first_name,
-      middle_name: applicantProfileForm.value.middle_name,
-      last_name: applicantProfileForm.value.last_name,
-      sex: applicantProfileForm.value.sex,
-      birth_date: applicantProfileForm.value.birth_date,
-      age: applicantProfileForm.value.age,
-      disability_type: applicantProfileForm.value.disability_type,
-      address_barangay: applicantProfileForm.value.address_barangay,
-      address_city: applicantProfileForm.value.address_city,
-      address_province: applicantProfileForm.value.address_province,
-      present_address: applicantProfileForm.value.present_address,
-      provincial_address: applicantProfileForm.value.provincial_address,
-      place_of_birth: applicantProfileForm.value.place_of_birth,
-      contact_country_code: applicantProfileForm.value.contact_country_code,
-      contact_number: applicantProfileForm.value.contact_number,
-      telephone_number: applicantProfileForm.value.telephone_number,
-      preferred_language: applicantProfileForm.value.preferred_language,
-      pwd_id_number: applicantProfileForm.value.pwd_id_number,
-      avatar: applicantProfileForm.value.avatar,
-      avatar_path: applicantProfileForm.value.avatar_path,
-    }
-
     const updatedProfile = await updateApplicantProfileDetails(authUser.value.id, payload)
-    const nextStoredUser = {
-      ...authUser.value,
-      name: updatedProfile.name,
-      avatar: updatedProfile.avatar || payload.avatar,
-      avatar_path: updatedProfile.avatar_path || payload.avatar_path,
-      applicant_registration: {
-        ...(authUser.value?.applicant_registration || authUser.value?.applicantRegistration || {}),
-        ...payload,
-      },
-    }
-    nextStoredUser.applicantRegistration = nextStoredUser.applicant_registration
-    authUser.value = nextStoredUser
-    setStoredAuthUser(nextStoredUser)
-    syncApplicantProfileForm(nextStoredUser)
-    setApplicantProfileMessage('Applicant profile updated successfully.')
+    syncApplicantStoredProfile(payload, updatedProfile)
+    isApplicantProfileEditing.value = false
+    setApplicantProfileMessage('')
+    notify(
+      isPhotoOnlyUpdate ? 'Successfully changed your profile photo.' : 'Successfully changed your profile.',
+      'success',
+      isPhotoOnlyUpdate ? 'Photo updated' : 'Profile updated',
+    )
   } catch (error) {
     setApplicantProfileMessage(error instanceof Error ? error.message : 'Unable to save your applicant profile right now.', 'error')
   } finally {
@@ -3423,6 +4309,16 @@ onMounted(() => {
     return
   }
 
+  if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+    applicantMobileViewportQuery = window.matchMedia(APPLICANT_MOBILE_LAYOUT_QUERY)
+    syncApplicantMobileViewport(applicantMobileViewportQuery.matches)
+    if (typeof applicantMobileViewportQuery.addEventListener === 'function') {
+      applicantMobileViewportQuery.addEventListener('change', handleApplicantMobileViewportChange)
+    } else if (typeof applicantMobileViewportQuery.addListener === 'function') {
+      applicantMobileViewportQuery.addListener(handleApplicantMobileViewportChange)
+    }
+  }
+
   authUser.value = user
   syncApplicantProfileForm(user)
   const normalizedDisability = String(
@@ -3493,6 +4389,19 @@ watch(toast, (value) => {
 })
 
 watch(
+  () => String(authUser.value?.id || authUser.value?.uid || authUser.value?.email || '').trim().toLowerCase(),
+  (identifier) => {
+    if (!identifier) {
+      savedApplicantFavoriteBusinesses.value = []
+      return
+    }
+
+    loadApplicantFavoriteBusinesses()
+  },
+  { immediate: true },
+)
+
+watch(
   [applicantModuleAccess, applicantAdminAccessNotifications],
   () => {
     if (!authUser.value?.id) return
@@ -3513,41 +4422,91 @@ watch(
 
 watch(activeSection, (sectionId) => {
   const normalizedSectionId = String(sectionId || '').trim()
+  closeApplicantMobileSidebar()
+  void nextTick(() => {
+    resetApplicantContentScroll()
+  })
   if (!normalizedSectionId || normalizedSectionId === 'settings') return
   applicantSettingsReturnSection.value = normalizedSectionId
 })
 
-watch(applicantTechnicalAssessmentRecords, (records) => {
-  const recordIds = (Array.isArray(records) ? records : [])
-    .map((record) => String(record?.id || '').trim())
-    .filter(Boolean)
+watch(
+  [isApplicantMobileViewport, isApplicantMobileSidebarOpen],
+  ([isMobileViewport, isMobileSidebarOpen]) => {
+    setApplicantMobileNavLock(isMobileViewport && isMobileSidebarOpen)
+  },
+  { immediate: true },
+)
 
-  if (!hasApplicantAssessmentFeedHydrated.value) {
-    seenApplicantAssessmentIds.value = recordIds
-    hasApplicantAssessmentFeedHydrated.value = true
-    return
-  }
-
-  const freshAssignments = (Array.isArray(records) ? records : []).filter((record) =>
-    !record.isSubmitted && !seenApplicantAssessmentIds.value.includes(String(record?.id || '').trim()))
-
-  if (freshAssignments.length) {
-    const latestAssignment = freshAssignments[0]
-    notify(
-      `${latestAssignment.company} assigned a technical assessment for your ${latestAssignment.jobTitle} application.`,
-      'success',
-      'New assessment',
+watch(
+  applicantEmail,
+  (email) => {
+    syncApplicantDeliveredNotificationToastIds(
+      readApplicantStoredNotificationIds(APPLICANT_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY, email),
+      email,
     )
-  }
+    hasApplicantNotificationFeedHydrated.value = false
+  },
+  { immediate: true },
+)
 
-  seenApplicantAssessmentIds.value = recordIds
-}, { deep: true })
+watch(
+  applicantNotifications,
+  (notifications) => {
+    const activeNotifications = (Array.isArray(notifications) ? notifications : [])
+      .map((item) => ({
+        ...item,
+        id: String(item?.id || '').trim(),
+      }))
+      .filter((item) => item.id)
+
+    const seenNotificationIds = new Set(readApplicantStoredNotificationIds(APPLICANT_SEEN_NOTIFICATION_STORAGE_KEY))
+    const nextNotificationIds = activeNotifications.map((item) => item.id)
+    const persistedDeliveredNotificationIds = applicantDeliveredNotificationToastIds.value
+      .filter((notificationId) => nextNotificationIds.includes(notificationId))
+    const deliveredNotificationIds = new Set(persistedDeliveredNotificationIds)
+
+    if (persistedDeliveredNotificationIds.length !== applicantDeliveredNotificationToastIds.value.length) {
+      syncApplicantDeliveredNotificationToastIds(persistedDeliveredNotificationIds)
+    }
+
+    const unseenNotifications = activeNotifications.filter((item) =>
+      isApplicantAutoToastNotification(item)
+      && !seenNotificationIds.has(item.id)
+      && !deliveredNotificationIds.has(item.id))
+
+    if (!hasApplicantNotificationFeedHydrated.value) {
+      hasApplicantNotificationFeedHydrated.value = true
+      if (unseenNotifications.length) {
+        notifyApplicantActivity(unseenNotifications[0])
+      }
+    } else if (unseenNotifications.length) {
+      notifyApplicantActivity(unseenNotifications[0])
+    }
+
+    if (!unseenNotifications.length) return
+
+    rememberApplicantDeliveredNotificationToastIds(unseenNotifications.map((item) => item.id))
+  },
+  { deep: true },
+)
 
 onBeforeUnmount(() => {
   window.clearInterval(banPollId)
   window.clearTimeout(dashboardEntryTimerId)
   window.clearTimeout(welcomeToastTimerId)
   window.clearTimeout(toastTimerId)
+  window.clearTimeout(applicantApplicationFollowupToastTimerId)
+  window.clearTimeout(applicantApplySuccessTimerId)
+  if (applicantMobileViewportQuery) {
+    if (typeof applicantMobileViewportQuery.removeEventListener === 'function') {
+      applicantMobileViewportQuery.removeEventListener('change', handleApplicantMobileViewportChange)
+    } else if (typeof applicantMobileViewportQuery.removeListener === 'function') {
+      applicantMobileViewportQuery.removeListener(handleApplicantMobileViewportChange)
+    }
+    applicantMobileViewportQuery = null
+  }
+  setApplicantMobileNavLock(false)
   clearApplicantJobsLoadingTimer()
   stopAuthUserProfileSync?.()
   stopPublicJobsSubscription?.()
@@ -3628,16 +4587,174 @@ onBeforeUnmount(() => {
           >
             <i class="bi bi-x-lg" />
           </button>
+          <span class="applicant-logout-confirm__eyebrow">Applicant session</span>
           <div class="applicant-logout-confirm__icon" aria-hidden="true">
-            <i class="bi bi-exclamation-triangle" />
+            <i class="bi bi-box-arrow-right" />
           </div>
-          <h2 id="applicant-logout-title">Log out of your account?</h2>
-          <p>You will leave your current applicant session and return to the login page.</p>
+          <h2 id="applicant-logout-title">Log out now?</h2>
+          <p>You can sign back in anytime to continue checking applications, interviews, and applicant updates.</p>
           <div class="applicant-logout-confirm__actions">
             <button type="button" class="applicant-logout-confirm__button applicant-logout-confirm__button--ghost" @click="cancelLogout">
-              No
+              Stay here
             </button>
             <button type="button" class="applicant-logout-confirm__button applicant-logout-confirm__button--primary" @click="confirmLogout">
+              Log out
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <transition name="applicant-apply-confirm">
+      <div
+        v-if="isApplicantApplyConfirmOpen"
+        class="applicant-apply-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="applicant-apply-title"
+      >
+        <div class="applicant-apply-confirm__card">
+          <button
+            type="button"
+            class="applicant-apply-confirm__close"
+            aria-label="Close apply confirmation"
+            :disabled="isApplicantApplySubmitting"
+            @click="closeApplicantApplyConfirm"
+          >
+            <i class="bi bi-x-lg" />
+          </button>
+          <span class="applicant-apply-confirm__eyebrow">Confirm application</span>
+          <div
+            class="applicant-apply-confirm__icon"
+            :class="{
+              'is-loading': applicantApplyConfirmPhase === 'loading',
+              'is-success': applicantApplyConfirmPhase === 'success',
+            }"
+            aria-hidden="true"
+          >
+            <i v-if="applicantApplyConfirmPhase === 'confirm'" class="bi bi-send-check" />
+            <i v-else-if="applicantApplyConfirmPhase === 'success'" class="bi bi-check2-circle" />
+            <span v-else class="applicant-apply-confirm__loading-dots">
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
+          <h2 id="applicant-apply-title">
+            {{
+              applicantApplyConfirmPhase === 'loading'
+                ? 'Sending your application'
+                : applicantApplyConfirmPhase === 'success'
+                  ? 'Application sent successfully'
+                  : `Apply for ${pendingApplicantApplyJob?.title || 'this job'}?`
+            }}
+          </h2>
+          <p>
+            {{
+              applicantApplyConfirmPhase === 'loading'
+                ? 'Please wait while we submit your resume and applicant details to the business.'
+                : applicantApplyConfirmPhase === 'success'
+                  ? `Your application for ${pendingApplicantApplyJob?.title || 'this job'} is now in the business review queue.`
+                  : `Your resume and applicant details will be sent to ${pendingApplicantApplyJob?.companyName || pendingApplicantApplyJob?.businessName || 'this business'}. Do you want to continue?`
+            }}
+          </p>
+
+          <div v-if="applicantApplyConfirmPhase === 'confirm'" class="applicant-apply-confirm__meta">
+            <span>
+              <i class="bi bi-buildings" aria-hidden="true" />
+              {{ pendingApplicantApplyJob?.companyName || pendingApplicantApplyJob?.businessName || 'Business' }}
+            </span>
+            <span>
+              <i class="bi bi-geo-alt" aria-hidden="true" />
+              {{ pendingApplicantApplyJob?.location || 'Location not specified' }}
+            </span>
+          </div>
+
+          <div v-if="applicantApplyConfirmPhase === 'confirm'" class="applicant-apply-confirm__actions">
+            <button
+              type="button"
+              class="applicant-apply-confirm__button applicant-apply-confirm__button--ghost"
+              :disabled="isApplicantApplySubmitting"
+              @click="closeApplicantApplyConfirm"
+            >
+              No
+            </button>
+            <button
+              type="button"
+              class="applicant-apply-confirm__button applicant-apply-confirm__button--primary"
+              :disabled="isApplicantApplySubmitting"
+              @click="confirmApplicantJobApplication"
+            >
+              Yes
+            </button>
+          </div>
+          <div v-else class="applicant-apply-confirm__status" :class="`is-${applicantApplyConfirmPhase}`">
+            <strong>
+              {{ applicantApplyConfirmPhase === 'loading' ? 'Submitting now' : 'Done' }}
+            </strong>
+            <span>
+              {{
+                applicantApplyConfirmPhase === 'loading'
+                  ? 'We are processing your application.'
+                  : 'You can track this job in My Applications.'
+              }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <transition name="applicant-profile-save-confirm">
+      <div
+        v-if="isApplicantProfileSaveConfirmOpen"
+        class="applicant-profile-save-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="applicant-profile-save-title"
+      >
+        <div class="applicant-profile-save-confirm__card">
+          <button
+            type="button"
+            class="applicant-profile-save-confirm__close"
+            aria-label="Close profile save confirmation"
+            :disabled="isApplicantProfileSaving"
+            @click="closeApplicantProfileSaveConfirm"
+          >
+            <i class="bi bi-x-lg" />
+          </button>
+          <span class="applicant-profile-save-confirm__eyebrow">Save changes</span>
+          <div class="applicant-profile-save-confirm__icon" aria-hidden="true">
+            <i class="bi bi-floppy2" />
+          </div>
+          <h2 id="applicant-profile-save-title">Save your profile changes?</h2>
+          <p>Your updated photo and profile information will replace the current version after you continue.</p>
+
+          <div class="applicant-profile-save-confirm__meta">
+            <span>
+              <i class="bi bi-camera" aria-hidden="true" />
+              {{ hasPendingApplicantAvatarChange ? 'New profile photo ready to save' : 'Profile photo stays the same' }}
+            </span>
+            <span>
+              <i class="bi bi-person-vcard" aria-hidden="true" />
+              {{ hasPendingApplicantProfileInformationChanges ? 'Profile details were edited' : 'No profile field changes detected' }}
+            </span>
+          </div>
+
+          <div class="applicant-profile-save-confirm__actions">
+            <button
+              type="button"
+              class="applicant-profile-save-confirm__button applicant-profile-save-confirm__button--ghost"
+              :disabled="isApplicantProfileSaving"
+              @click="closeApplicantProfileSaveConfirm"
+            >
+              No
+            </button>
+            <button
+              type="button"
+              class="applicant-profile-save-confirm__button applicant-profile-save-confirm__button--primary"
+              :disabled="isApplicantProfileSaving"
+              @click="saveApplicantProfile"
+            >
               Yes
             </button>
           </div>
@@ -3651,11 +4768,15 @@ onBeforeUnmount(() => {
       :applicant-email="applicantEmail"
       :applicant-avatar-url="applicantAvatarUrl"
       :applicant-initials="applicantInitials"
+      :is-mobile="isApplicantMobileViewport"
+      :is-open="isApplicantMobileSidebarOpen"
       :sidebar-items="sidebarItems"
+      @close="closeApplicantMobileSidebar"
       @select-section="selectSection"
     />
 
     <main
+      ref="applicantMainRef"
       class="applicant-main"
       :class="{ 'applicant-main--find-jobs': applicantRenderedSection === 'find-jobs' }"
     >
@@ -3666,11 +4787,14 @@ onBeforeUnmount(() => {
         :applicant-last-name="applicantLastName"
         :applicant-email="applicantEmail"
         :applicant-avatar-url="applicantAvatarUrl"
+        :show-menu-button="isApplicantMobileViewport"
+        :is-sidebar-open="isApplicantMobileSidebarOpen"
         :notifications="applicantNotifications"
         @open-notification="handleApplicantNotificationOpen"
         @open-personalization="openPersonalization"
         @open-settings="openApplicantSettings"
         @logout="requestLogout"
+        @toggle-sidebar="toggleApplicantMobileSidebar"
       />
 
       <transition name="applicant-page" mode="out-in">
@@ -3849,6 +4973,7 @@ onBeforeUnmount(() => {
             :applicant-job-sort-mode="applicantJobSortMode"
             :applicant-job-sort-label="applicantJobSortLabel"
             :applicant-job-sort-options="applicantJobSortOptions"
+            :disable-card-animations="isApplicantMobileViewport"
             :resolve-applicant-job-application-state="resolveApplicantJobApplicationState"
             :on-set-applicant-job-filter-mode="setApplicantJobFilterMode"
             :on-set-applicant-job-pwd-type="updateApplicantJobPwdType"
@@ -3856,6 +4981,7 @@ onBeforeUnmount(() => {
             :on-set-applicant-job-sort-mode="setApplicantJobSortMode"
             :on-reset-applicant-job-filters="resetApplicantJobFilters"
             :selected-find-job="selectedFindJob"
+            :is-applicant-job-saved="isApplicantJobSaved"
             :should-show-applicant-job-new-tag="shouldShowApplicantJobNewTag"
             @update:find-jobs-query="findJobsQuery = $event"
             @select-find-job="selectFindJob"
@@ -3888,18 +5014,30 @@ onBeforeUnmount(() => {
             :applicant-avatar-url="applicantAvatarUrl"
             :applicant-profile-form="applicantProfileForm"
             :is-applicant-avatar-uploading="isApplicantAvatarUploading"
+            :is-applicant-resume-uploading="isApplicantResumeUploading"
             :is-applicant-profile-saving="isApplicantProfileSaving"
+            :is-applicant-profile-editing="isApplicantProfileEditing"
+            :has-pending-applicant-profile-changes="hasPendingApplicantProfileChanges"
+            :has-pending-applicant-avatar-change="hasPendingApplicantAvatarChange"
             :applicant-profile-message="applicantProfileMessage"
             :applicant-profile-message-tone="applicantProfileMessageTone"
             :applicant-profile-snapshot="applicantProfileSnapshot"
+            :applicant-profile-preferred-page="applicantProfilePreferredPage"
             :applicant-present-address="applicantPresentAddress"
             :applicant-provincial-address="applicantProvincialAddress"
             :applicant-place-of-birth="applicantPlaceOfBirth"
             :applicant-sex="applicantSex"
             :applicant-age="applicantAge"
             :applicant-joined="applicantJoined"
+            :applicant-resume-url="applicantResumeUrl"
+            :applicant-resume-file-name="applicantResumeFileName"
+            :applicant-has-resume="applicantHasResume"
+            :saved-favorite-businesses="sortedApplicantFavoriteBusinesses"
+            @start-profile-edit="startApplicantProfileEdit"
+            @cancel-profile-edit="cancelApplicantProfileEdit"
             @upload-avatar="handleApplicantAvatarChange"
-            @save-profile="saveApplicantProfile"
+            @upload-resume="handleApplicantResumeChange"
+            @save-profile="requestApplicantProfileSave"
           />
 
           <ApplicantInbox

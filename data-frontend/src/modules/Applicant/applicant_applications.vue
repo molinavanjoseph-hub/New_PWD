@@ -31,8 +31,101 @@ const emit = defineEmits(['update:selected-application-ids', 'delete-selected-ap
 const applicationOutcomeLabel = computed(
   () => `${props.applicationStats.accepted || 0} approved / ${props.applicationStats.rejected || 0} rejected`,
 )
+const applicationHeroStats = computed(() => [
+  {
+    id: 'applied',
+    label: 'Applied',
+    value: props.applicationStats.applied || 0,
+    tone: 'neutral',
+    icon: 'bi bi-send-check',
+  },
+  {
+    id: 'pending',
+    label: 'Pending',
+    value: props.applicationStats.pending || 0,
+    tone: 'warning',
+    icon: 'bi bi-hourglass-split',
+  },
+  {
+    id: 'interview',
+    label: 'Interview',
+    value: props.applicationStats.interview || 0,
+    tone: 'info',
+    icon: 'bi bi-camera-video',
+  },
+  {
+    id: 'accepted',
+    label: 'Approved',
+    value: props.applicationStats.accepted || 0,
+    tone: 'success',
+    icon: 'bi bi-patch-check',
+  },
+])
+const preparedApplicationRecords = computed(() =>
+  props.applicationRecords.map((record) => {
+    const timelineItems = Array.isArray(record?.timelineItems) ? record.timelineItems : []
+    let hasPreviousOpenStep = false
+
+    const preparedTimelineItems = timelineItems.map((step, index) => {
+      const tone = getTimelineStepTone(step)
+      let state = 'active'
+
+      if (tone === 'success') {
+        state = 'complete'
+      } else if (tone === 'danger' || tone === 'muted') {
+        state = 'failed'
+      } else if (hasPreviousOpenStep) {
+        state = 'pending'
+      }
+
+      if (tone !== 'success') {
+        hasPreviousOpenStep = true
+      }
+
+      const lineStateClass = state === 'active'
+        ? 'partial'
+        : state === 'pending'
+          ? 'empty'
+          : 'filled'
+
+      return {
+        ...step,
+        visualIcon: timelineVisualIcon(step),
+        itemClass: `applicant-applications-page__timeline-item--${state}`,
+        dotClass: [
+          `applicant-applications-page__timeline-dot--${tone}`,
+          `applicant-applications-page__timeline-dot--${state}`,
+        ],
+        badgeClass: [
+          `applicant-applications-page__timeline-badge--${tone}`,
+          `applicant-applications-page__timeline-badge--${state}`,
+        ],
+        badgeIcon:
+          state === 'complete'
+            ? 'bi bi-check-lg'
+            : state === 'failed'
+              ? 'bi bi-x-lg'
+              : '',
+        lineClass:
+          index === timelineItems.length - 1
+            ? []
+            : [
+                `applicant-applications-page__timeline-line--${tone}`,
+                `applicant-applications-page__timeline-line--${lineStateClass}`,
+              ],
+      }
+    })
+
+    return {
+      ...record,
+      companyInitial: getApplicationCompanyInitial(record?.company),
+      timelineItems: preparedTimelineItems,
+    }
+  }),
+)
+const hasApplicationRecords = computed(() => preparedApplicationRecords.value.length > 0)
 const visibleApplicationIds = computed(() =>
-  props.applicationRecords.map((record) => String(record?.id || '').trim()).filter(Boolean),
+  preparedApplicationRecords.value.map((record) => String(record?.id || '').trim()).filter(Boolean),
 )
 const selectedApplicationIdSet = computed(() =>
   new Set(
@@ -66,34 +159,6 @@ const getTimelineStepTone = (step) => {
   return 'warning'
 }
 
-const getTimelineStepState = (step, index, steps = []) => {
-  const tone = getTimelineStepTone(step)
-  if (tone === 'success') return 'complete'
-  if (tone === 'danger' || tone === 'muted') return 'failed'
-
-  const hasPreviousOpenStep = steps
-    .slice(0, index)
-    .some((timelineStep) => getTimelineStepTone(timelineStep) !== 'success')
-
-  return hasPreviousOpenStep ? 'pending' : 'active'
-}
-
-const timelineItemClass = (step, index, steps) =>
-  `applicant-applications-page__timeline-item--${getTimelineStepState(step, index, steps)}`
-
-const timelineDotClass = (step, index, steps) => [
-  `applicant-applications-page__timeline-dot--${getTimelineStepTone(step)}`,
-  `applicant-applications-page__timeline-dot--${getTimelineStepState(step, index, steps)}`,
-]
-
-const timelineLineClass = (step, index, steps) => {
-  const stepState = getTimelineStepState(step, index, steps)
-  return [
-    `applicant-applications-page__timeline-line--${getTimelineStepTone(step)}`,
-    `applicant-applications-page__timeline-line--${stepState === 'active' ? 'partial' : stepState === 'pending' ? 'empty' : 'filled'}`,
-  ]
-}
-
 const timelineVisualIcon = (step) => {
   const timelineId = String(step?.id || '').trim().toLowerCase()
 
@@ -106,17 +171,14 @@ const timelineVisualIcon = (step) => {
   return 'bi bi-circle'
 }
 
-const timelineBadgeClass = (step, index, steps) => [
-  `applicant-applications-page__timeline-badge--${getTimelineStepTone(step)}`,
-  `applicant-applications-page__timeline-badge--${getTimelineStepState(step, index, steps)}`,
-]
-
-const timelineBadgeIcon = (step, index, steps) => {
-  const stepState = getTimelineStepState(step, index, steps)
-  if (stepState === 'complete') return 'bi bi-check-lg'
-  if (stepState === 'failed') return 'bi bi-x-lg'
-  return ''
-}
+const getApplicationCompanyInitial = (value) =>
+  String(value || 'C')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('') || 'C'
 
 const emitSelectedApplicationIds = (applicationIds = []) => {
   emit(
@@ -220,6 +282,33 @@ watch(selectedApplicationCount, (count) => {
   <section class="applicant-applications-page">
 
     <article class="applicant-applications-page__panel">
+        <section class="applicant-applications-page__hero">
+          <div class="applicant-applications-page__hero-copy">
+            <p class="applicant-applications-page__eyebrow">My Applications</p>
+            <h2>Track every job application in one clean workspace</h2>
+            <p>Review submitted jobs, watch hiring progress, and stay ready for interview or assessment updates without touching your status line flow.</p>
+          </div>
+
+          <div class="applicant-applications-page__hero-side">
+            <div class="applicant-applications-page__hero-stats" aria-label="Application overview">
+              <article
+                v-for="item in applicationHeroStats"
+                :key="item.id"
+                class="applicant-applications-page__hero-stat"
+                :class="`applicant-applications-page__hero-stat--${item.tone}`"
+              >
+                <span><i :class="item.icon" aria-hidden="true" /> {{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </article>
+            </div>
+
+            <div class="applicant-applications-page__hero-outcome">
+              <span>Outcome Summary</span>
+              <strong>{{ applicationOutcomeLabel }}</strong>
+            </div>
+          </div>
+        </section>
+
         <div class="applicant-panel__head applicant-panel__head--applications">
           <div>
             <h3>Application Records</h3>
@@ -227,7 +316,7 @@ watch(selectedApplicationCount, (count) => {
           </div>
           <div class="applicant-applications-page__head-actions">
             <button
-              v-if="applicationRecords.length && !isSelectionMode"
+              v-if="hasApplicationRecords && !isSelectionMode"
               type="button"
               class="applicant-applications-page__select-button"
               :disabled="isDeletingApplications"
@@ -237,7 +326,7 @@ watch(selectedApplicationCount, (count) => {
               Select
             </button>
 
-            <div v-else-if="applicationRecords.length" class="applicant-applications-page__bulk-actions">
+            <div v-else-if="hasApplicationRecords" class="applicant-applications-page__bulk-actions">
               <label class="applicant-applications-page__bulk-toggle">
                 <input
                   type="checkbox"
@@ -275,13 +364,12 @@ watch(selectedApplicationCount, (count) => {
           </div>
         </div>
 
-        <div v-if="applicationRecords.length" class="applicant-applications-page__list">
+        <div v-if="hasApplicationRecords" class="applicant-applications-page__list">
           <article
-            v-for="(record, recordIndex) in applicationRecords"
+            v-for="record in preparedApplicationRecords"
             :key="record.id"
             class="applicant-applications-page__card"
             :class="{ 'applicant-applications-page__card--inactive': record.isDiscontinued }"
-            :style="{ '--card-enter-delay': `${recordIndex * 60}ms` }"
           >
             <!-- Card accent bar -->
             <div class="applicant-applications-page__card-accent" aria-hidden="true" />
@@ -290,7 +378,13 @@ watch(selectedApplicationCount, (count) => {
             <div class="applicant-applications-page__card-header">
               <div class="applicant-applications-page__card-brand">
                 <div class="applicant-applications-page__card-avatar" aria-hidden="true">
-                  {{ (record.company || 'C').charAt(0).toUpperCase() }}
+                  <img
+                    v-if="record.logoUrl"
+                    :src="record.logoUrl"
+                    alt=""
+                    class="applicant-applications-page__card-avatar-image"
+                  >
+                  <template v-else>{{ record.companyInitial }}</template>
                 </div>
                 <div class="applicant-applications-page__card-identity">
                   <h4>{{ record.title }}</h4>
@@ -298,6 +392,10 @@ watch(selectedApplicationCount, (count) => {
                     <i class="bi bi-building" />
                     {{ record.company }}
                   </p>
+                  <div class="applicant-applications-page__card-caption">
+                    <span><i class="bi bi-calendar-check" /> Applied {{ record.submittedAtLabel }}</span>
+                    <span><i class="bi bi-clock-history" /> Updated {{ record.lastUpdatedLabel }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -392,19 +490,19 @@ watch(selectedApplicationCount, (count) => {
                   v-for="(step, index) in record.timelineItems"
                   :key="step.id"
                   class="applicant-applications-page__timeline-item"
-                  :class="timelineItemClass(step, index, record.timelineItems)"
+                  :class="step.itemClass"
                 >
                   <div class="applicant-applications-page__timeline-marker" aria-hidden="true">
-                    <span class="applicant-applications-page__timeline-dot" :class="timelineDotClass(step, index, record.timelineItems)">
-                      <i :class="timelineVisualIcon(step)" />
+                    <span class="applicant-applications-page__timeline-dot" :class="step.dotClass">
+                      <i :class="step.visualIcon" />
                     </span>
-                    <span class="applicant-applications-page__timeline-badge" :class="timelineBadgeClass(step, index, record.timelineItems)">
-                      <i v-if="timelineBadgeIcon(step, index, record.timelineItems)" :class="timelineBadgeIcon(step, index, record.timelineItems)" />
+                    <span class="applicant-applications-page__timeline-badge" :class="step.badgeClass">
+                      <i v-if="step.badgeIcon" :class="step.badgeIcon" />
                     </span>
                     <span
                       v-if="index !== record.timelineItems.length - 1"
                       class="applicant-applications-page__timeline-line"
-                      :class="timelineLineClass(step, index, record.timelineItems)"
+                      :class="step.lineClass"
                     />
                   </div>
 
@@ -516,11 +614,126 @@ watch(selectedApplicationCount, (count) => {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+.applicant-applications-page__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1.15rem 1.2rem;
+  border: 1px solid rgba(190, 208, 198, 0.72);
+  border-radius: 1.15rem;
+  background:
+    radial-gradient(circle at top left, rgba(221, 243, 229, 0.92), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.99), rgba(246, 252, 249, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 10px 24px rgba(18, 56, 38, 0.04);
+}
+
+.applicant-applications-page__hero-copy {
+  display: grid;
+  gap: 0.45rem;
+  max-width: 39rem;
+}
+
+.applicant-applications-page__hero-side {
+  display: grid;
+  gap: 0.85rem;
+  min-width: min(100%, 24rem);
+}
+
+.applicant-applications-page__hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.applicant-applications-page__hero-stat,
+.applicant-applications-page__hero-outcome {
+  display: grid;
+  gap: 0.32rem;
+  padding: 0.82rem 0.9rem;
+  border: 1px solid rgba(196, 210, 202, 0.72);
+  border-radius: 0.95rem;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.applicant-applications-page__hero-stat span,
+.applicant-applications-page__hero-outcome span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  color: #688174;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.applicant-applications-page__eyebrow {
+  color: #5d7a69;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.applicant-applications-page__hero-copy h2 {
+  color: #173324;
+  font-size: clamp(1.5rem, 1.9vw, 1.95rem);
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.applicant-applications-page__hero-copy p:last-child {
+  color: #5f796b;
+  font-size: 0.92rem;
+  line-height: 1.68;
+}
+
+.applicant-applications-page__hero-stat strong {
+  color: #173324;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.applicant-applications-page__hero-stat--warning strong,
+.applicant-applications-page__hero-stat--warning span i {
+  color: #a16207;
+}
+
+.applicant-applications-page__hero-stat--info strong,
+.applicant-applications-page__hero-stat--info span i {
+  color: #0f766e;
+}
+
+.applicant-applications-page__hero-stat--success strong,
+.applicant-applications-page__hero-stat--success span i {
+  color: #167844;
+}
+
+.applicant-applications-page__hero-outcome {
+  gap: 0.24rem;
+  background: linear-gradient(135deg, rgba(238, 247, 241, 0.98), rgba(255, 255, 255, 0.95));
+}
+
+.applicant-applications-page__hero-outcome strong {
+  color: #183126;
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
 /* ─── Reset margins ─── */
 .applicant-applications-page__summary-copy,
 .applicant-applications-page__summary-copy h2,
 .applicant-applications-page__summary-copy p,
 .applicant-applications-page__eyebrow,
+.applicant-applications-page__hero-copy h2,
+.applicant-applications-page__hero-copy p,
+.applicant-applications-page__hero-stat span,
+.applicant-applications-page__hero-stat strong,
+.applicant-applications-page__hero-outcome span,
+.applicant-applications-page__hero-outcome strong,
 .applicant-applications-page__card h4,
 .applicant-applications-page__card p,
 .applicant-applications-page__empty h3,
@@ -856,9 +1069,12 @@ watch(selectedApplicationCount, (count) => {
   position: relative;
   display: grid;
   gap: 0;
+  contain: layout paint;
   border: 1px solid rgba(193, 206, 214, 0.72);
   border-radius: 1.1rem;
   background: #ffffff;
+  content-visibility: auto;
+  contain-intrinsic-size: 34rem;
   overflow: hidden;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.03),
@@ -867,20 +1083,6 @@ watch(selectedApplicationCount, (count) => {
     transform 0.26s cubic-bezier(0.22, 1, 0.36, 1),
     border-color 0.22s ease,
     box-shadow 0.26s cubic-bezier(0.22, 1, 0.36, 1);
-  animation: applicant-card-entrance 0.42s cubic-bezier(0.22, 1, 0.36, 1) var(--card-enter-delay, 0ms) both;
-}
-
-@keyframes applicant-card-entrance {
-  from {
-    opacity: 0;
-    transform: translateY(1rem) scale(0.98);
-    filter: blur(2px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
 }
 
 .applicant-applications-page__card:hover {
@@ -945,6 +1147,7 @@ watch(selectedApplicationCount, (count) => {
   box-shadow:
     0 4px 12px rgba(27, 138, 84, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  overflow: hidden;
 }
 
 .applicant-applications-page__card--inactive .applicant-applications-page__card-avatar {
@@ -952,8 +1155,17 @@ watch(selectedApplicationCount, (count) => {
   box-shadow: 0 4px 12px rgba(148, 163, 184, 0.18);
 }
 
+.applicant-applications-page__card-avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .applicant-applications-page__card-identity {
   min-width: 0;
+  display: grid;
+  gap: 0.18rem;
 }
 
 .applicant-applications-page__card-identity h4 {
@@ -977,6 +1189,27 @@ watch(selectedApplicationCount, (count) => {
 .applicant-applications-page__card-company i {
   font-size: 0.78rem;
   color: #7b9488;
+}
+
+.applicant-applications-page__card-caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.8rem;
+  margin-top: 0.2rem;
+  color: #72857a;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.applicant-applications-page__card-caption span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+}
+
+.applicant-applications-page__card-caption i {
+  color: #8aa192;
+  font-size: 0.8rem;
 }
 
 /* ─── Card actions ─── */
@@ -1621,6 +1854,19 @@ watch(selectedApplicationCount, (count) => {
     min-height: auto;
   }
 
+  .applicant-applications-page__hero {
+    flex-direction: column;
+  }
+
+  .applicant-applications-page__hero-side {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .applicant-applications-page__hero-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .applicant-applications-page__empty {
     grid-template-columns: 1fr;
   }
@@ -1633,6 +1879,11 @@ watch(selectedApplicationCount, (count) => {
   }
 
   .applicant-applications-page__panel {
+    padding: 1rem;
+    border-radius: 1rem;
+  }
+
+  .applicant-applications-page__hero {
     padding: 1rem;
     border-radius: 1rem;
   }
@@ -1689,6 +1940,11 @@ watch(selectedApplicationCount, (count) => {
 
   .applicant-panel__head--applications {
     align-items: start;
+  }
+
+  .applicant-applications-page__card-caption {
+    flex-direction: column;
+    gap: 0.32rem;
   }
 
   .applicant-applications-page__empty {

@@ -109,7 +109,7 @@ export default defineConfig(({ command }) => ({
     host: '0.0.0.0',
     port: 5173,
     strictPort: true,
-    allowedHosts: ['nonstimulating-trimeric-evangeline.ngrok-free.dev'],
+    allowedHosts: ['brachydactylous-eliz-destructive.ngrok-free.dev'],
   },
   resolve: {
     alias: {

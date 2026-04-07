@@ -17,7 +17,7 @@ const displayedMessageId = ref('')
 const readMessageIds = ref([])
 const isViewerLoading = ref(false)
 
-const MESSAGE_SWITCH_DELAY_MS = 2000
+const MESSAGE_SWITCH_DELAY_MS = 1000
 
 let messageSwitchToken = 0
 let messageSwitchTimeoutId = null
@@ -36,6 +36,7 @@ const normalizedItems = computed(() =>
     .map((item) => ({
       id: String(item?.id || '').trim(),
       sender: String(item?.sender || 'Inbox update').trim() || 'Inbox update',
+      senderImageUrl: String(item?.senderImageUrl || item?.senderLogoUrl || item?.logoUrl || '').trim(),
       senderMeta: String(item?.senderMeta || '').trim(),
       subject: String(item?.subject || 'Untitled message').trim() || 'Untitled message',
       preview: String(item?.preview || '').trim(),
@@ -174,7 +175,7 @@ const selectMessage = (messageId, options = {}) => {
 
   selectedMessageId.value = normalizedMessageId
 
-  if (immediate || !displayedMessageId.value) {
+  if (immediate || !displayedMessageId.value || MESSAGE_SWITCH_DELAY_MS <= 0) {
     clearMessageSwitchTimeout()
     isViewerLoading.value = false
     displayedMessageId.value = normalizedMessageId
@@ -270,7 +271,13 @@ onBeforeUnmount(() => {
             @click="selectMessage(item.id)"
           >
             <span class="applicant-inbox-page__thread-avatar" aria-hidden="true">
-              {{ getSenderInitials(item.sender) }}
+              <img
+                v-if="item.senderImageUrl"
+                :src="item.senderImageUrl"
+                alt=""
+                class="applicant-inbox-page__avatar-image"
+              />
+              <template v-else>{{ getSenderInitials(item.sender) }}</template>
             </span>
 
             <span class="applicant-inbox-page__thread-copy">
@@ -339,7 +346,13 @@ onBeforeUnmount(() => {
 
               <div class="applicant-inbox-page__message-sender">
                 <span class="applicant-inbox-page__message-avatar" aria-hidden="true">
-                  {{ getSenderInitials(selectedMessage.sender) }}
+                  <img
+                    v-if="selectedMessage.senderImageUrl"
+                    :src="selectedMessage.senderImageUrl"
+                    alt=""
+                    class="applicant-inbox-page__avatar-image"
+                  />
+                  <template v-else>{{ getSenderInitials(selectedMessage.sender) }}</template>
                 </span>
 
                 <div class="applicant-inbox-page__message-sender-copy">
@@ -399,7 +412,12 @@ onBeforeUnmount(() => {
 .applicant-inbox-page {
   display: grid;
   gap: 1.5rem;
-  min-height: min(46rem, calc(100vh - 9rem));
+  min-height: 0;
+  height: calc(100vh - var(--applicant-sticky-navbar-offset) - 1rem);
+  height: calc(100dvh - var(--applicant-sticky-navbar-offset) - 1rem);
+  max-height: calc(100vh - var(--applicant-sticky-navbar-offset) - 1rem);
+  max-height: calc(100dvh - var(--applicant-sticky-navbar-offset) - 1rem);
+  overflow: hidden;
 }
 
 .applicant-inbox-page__hero {
@@ -501,6 +519,8 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(18rem, 26rem) minmax(0, 1fr);
   gap: 1.25rem;
+  height: 100%;
+  max-height: 100%;
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -600,12 +620,22 @@ onBeforeUnmount(() => {
   width: 2.75rem;
   aspect-ratio: 1;
   border: 1px solid rgba(83, 128, 98, 0.18);
+  border-radius: 0.9rem;
   background: linear-gradient(135deg, rgba(225, 243, 233, 0.95), rgba(247, 252, 249, 0.96));
   color: #1c5138;
   font-size: 0.86rem;
   font-weight: 800;
+  overflow: hidden;
+  flex-shrink: 0;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+.applicant-inbox-page__avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .applicant-inbox-page__thread-copy {
@@ -1032,6 +1062,9 @@ onBeforeUnmount(() => {
 @media (max-width: 1180px) {
   .applicant-inbox-page {
     min-height: auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .applicant-inbox-page__hero {
@@ -1045,6 +1078,8 @@ onBeforeUnmount(() => {
 
   .applicant-inbox-page__shell {
     grid-template-columns: 1fr;
+    height: auto;
+    max-height: none;
   }
 
   .applicant-inbox-page__sidebar {

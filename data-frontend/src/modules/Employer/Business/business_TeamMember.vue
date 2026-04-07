@@ -109,7 +109,7 @@ const {
     <section v-if="activeSection === 'user-overview'" class="business-user-management__overview">
       <div class="business-user-management__overview-head">
         <div>
-          <p class="business-user-management__panel-label">User Overview</p>
+          <p class="business-user-management__panel-label">Team Overview</p>
           <h3>Quick snapshot of your team members</h3>
         </div>
         <span class="business-user-management__panel-chip">Team Members</span>
@@ -323,7 +323,7 @@ const {
     <article v-else class="business-user-management__panel business-user-management__panel--form">
       <div class="business-user-management__panel-head">
         <div>
-          <p class="business-user-management__panel-label">Employer List</p>
+          <p class="business-user-management__panel-label">Employee Directory</p>
           <h3>Review your saved employee profiles</h3>
           <p class="business-user-management__panel-copy">This section is now list-only so you can focus on reviewing linked employee records.</p>
         </div>

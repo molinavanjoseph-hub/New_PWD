@@ -134,29 +134,38 @@ const isActiveSigning = (recordId) =>
 
 <template>
   <section class="business-contract-signing">
-    <header class="business-contract-signing__hero">
-      <div class="business-contract-signing__hero-copy">
-        <span class="business-contract-signing__eyebrow">Offer &amp; Onboarding</span>
+    <div class="business-contract-signing__hero business-job-post__lead">
+      <div class="business-contract-signing__hero-copy business-job-post__copy">
+        <span class="business-contract-signing__eyebrow business-job-post__eyebrow">Offer &amp; Onboarding</span>
         <h2>Contract Signing</h2>
         <p>
           Dito lang lalabas ang applicants na na-issue-han ng offer at nag-confirm na sa kanilang Job Offers page.
           Mula rito puwede nang i-send ang contract at tapusin ang countersign flow.
         </p>
-        <small class="business-contract-signing__sync-note">{{ syncLabel }}</small>
+        <div class="business-job-post__lead-meta business-contract-signing__lead-meta">
+          <span class="business-job-post__lead-chip">
+            <i class="bi bi-clock-history" aria-hidden="true" />
+            {{ syncLabel }}
+          </span>
+          <span class="business-job-post__lead-chip">
+            <i class="bi bi-diagram-3" aria-hidden="true" />
+            {{ traceSummary }}
+          </span>
+        </div>
       </div>
+    </div>
 
-      <div class="business-contract-signing__summary-grid">
-        <article
-          v-for="card in summaryCards"
-          :key="card.label"
-          class="business-contract-signing__summary-card"
-        >
-          <span>{{ card.label }}</span>
-          <strong>{{ card.value }}</strong>
-          <p>{{ card.copy }}</p>
-        </article>
-      </div>
-    </header>
+    <div class="business-job-post__highlights business-contract-signing__summary-grid">
+      <article
+        v-for="card in summaryCards"
+        :key="card.label"
+        class="business-job-post__highlight business-contract-signing__summary-card"
+      >
+        <span>{{ card.label }}</span>
+        <strong>{{ card.value }}</strong>
+        <p>{{ card.copy }}</p>
+      </article>
+    </div>
 
     <div class="business-contract-signing__toolbar">
       <div class="business-contract-signing__filters">
@@ -175,7 +184,7 @@ const isActiveSigning = (recordId) =>
 
       <button
         type="button"
-        class="business-contract-signing__button business-contract-signing__button--secondary"
+        class="business-contract-signing__button business-contract-signing__button--secondary business-job-post__button business-job-post__button--ghost"
         @click="refreshQueue"
       >
         <i class="bi bi-arrow-clockwise" aria-hidden="true" />
@@ -184,14 +193,14 @@ const isActiveSigning = (recordId) =>
     </div>
 
     <div class="business-contract-signing__layout">
-      <article class="business-contract-signing__panel">
-        <div class="business-contract-signing__panel-head">
+      <article class="business-contract-signing__panel business-job-post__panel">
+        <div class="business-contract-signing__panel-head business-job-post__panel-head">
           <div>
-            <p class="business-contract-signing__panel-label">Contract Queue</p>
+            <p class="business-contract-signing__panel-label business-job-post__tips-label">Contract Queue</p>
             <h3>Confirmed applicant table</h3>
             <p>Kapag accepted na ang job offer, dito na sila lalabas para sa contract assignment.</p>
           </div>
-          <span class="business-contract-signing__count">
+          <span class="business-contract-signing__count business-job-post__panel-chip">
             {{ contractRows.length }} {{ contractRows.length === 1 ? 'record' : 'records' }}
           </span>
         </div>
@@ -256,7 +265,7 @@ const isActiveSigning = (recordId) =>
                   <div class="business-contract-signing__actions business-contract-signing__actions--table">
                     <button
                       type="button"
-                      class="business-contract-signing__row-button"
+                      class="business-contract-signing__row-button business-job-post__secondary"
                       @click.stop="selectRow(row.id)"
                     >
                       Open
@@ -264,7 +273,7 @@ const isActiveSigning = (recordId) =>
                     <button
                       v-if="row.canSend"
                       type="button"
-                      class="business-contract-signing__button business-contract-signing__button--primary"
+                      class="business-contract-signing__button business-contract-signing__button--primary business-job-post__save"
                       :disabled="isBusinessContractSaving"
                       @click.stop="sendContractToApplicant(row.id)"
                     >
@@ -279,7 +288,7 @@ const isActiveSigning = (recordId) =>
                     <button
                       v-else-if="row.canBusinessSign || row.status === 'completed'"
                       type="button"
-                      class="business-contract-signing__button business-contract-signing__button--secondary"
+                      class="business-contract-signing__button business-contract-signing__button--secondary business-job-post__secondary"
                       @click.stop="selectRow(row.id)"
                     >
                       {{ row.status === 'completed' ? 'View Signatures' : 'Countersign' }}
@@ -311,11 +320,11 @@ const isActiveSigning = (recordId) =>
         </div>
       </article>
 
-      <article class="business-contract-signing__panel business-contract-signing__panel--editor">
+      <article class="business-contract-signing__panel business-contract-signing__panel--editor business-job-post__panel">
         <template v-if="currentRow">
-          <div class="business-contract-signing__panel-head">
+          <div class="business-contract-signing__panel-head business-job-post__panel-head">
             <div>
-              <p class="business-contract-signing__panel-label">Contract Composer</p>
+              <p class="business-contract-signing__panel-label business-job-post__tips-label">Contract Composer</p>
               <h3>{{ currentRow.name }}</h3>
               <p>{{ currentRow.jobTitle }} at {{ currentRow.businessName || 'Business Workspace' }}</p>
             </div>
@@ -347,7 +356,7 @@ const isActiveSigning = (recordId) =>
           </div>
 
           <div class="business-contract-signing__form-grid">
-            <label class="business-contract-signing__field">
+            <label class="business-contract-signing__field business-job-post__field">
               <span>Contract Title</span>
               <input
                 :value="contractDraft.contractTitle"
@@ -358,7 +367,7 @@ const isActiveSigning = (recordId) =>
               >
             </label>
 
-            <label class="business-contract-signing__field">
+            <label class="business-contract-signing__field business-job-post__field">
               <span>Employment Type</span>
               <input
                 :value="contractDraft.employmentType"
@@ -369,7 +378,7 @@ const isActiveSigning = (recordId) =>
               >
             </label>
 
-            <label class="business-contract-signing__field">
+            <label class="business-contract-signing__field business-job-post__field">
               <span>Salary Offer</span>
               <input
                 :value="contractDraft.salaryOffer"
@@ -380,7 +389,7 @@ const isActiveSigning = (recordId) =>
               >
             </label>
 
-            <label class="business-contract-signing__field">
+            <label class="business-contract-signing__field business-job-post__field">
               <span>Start Date</span>
               <input
                 :value="contractDraft.startDate"
@@ -391,7 +400,7 @@ const isActiveSigning = (recordId) =>
             </label>
           </div>
 
-          <label class="business-contract-signing__field business-contract-signing__field--wide">
+          <label class="business-contract-signing__field business-contract-signing__field--wide business-job-post__field">
             <span>Notes</span>
             <textarea
               :value="contractDraft.notes"
@@ -402,7 +411,7 @@ const isActiveSigning = (recordId) =>
             />
           </label>
 
-          <label class="business-contract-signing__field business-contract-signing__field--wide">
+          <label class="business-contract-signing__field business-contract-signing__field--wide business-job-post__field">
             <span>Contract Body</span>
             <textarea
               :value="contractDraft.contractBody"
@@ -413,10 +422,10 @@ const isActiveSigning = (recordId) =>
             />
           </label>
 
-          <div class="business-contract-signing__actions">
+          <div class="business-contract-signing__actions business-job-post__actions">
             <button
               type="button"
-              class="business-contract-signing__button business-contract-signing__button--secondary"
+              class="business-contract-signing__button business-contract-signing__button--secondary business-job-post__secondary"
               :disabled="!canEditContracts || isBusinessContractSaving"
               @click="restoreContractDraft"
             >
@@ -424,7 +433,7 @@ const isActiveSigning = (recordId) =>
             </button>
             <button
               type="button"
-              class="business-contract-signing__button business-contract-signing__button--primary"
+              class="business-contract-signing__button business-contract-signing__button--primary business-job-post__save"
               :disabled="!canEditContracts || !currentRow.canSend || isBusinessContractSaving"
               @click="saveAndSendBusinessContract"
             >
@@ -510,16 +519,16 @@ const isActiveSigning = (recordId) =>
 .business-contract-signing__hero,
 .business-contract-signing__panel,
 .business-contract-signing__summary-card {
-  border: 1px solid rgba(210, 222, 215, 0.95);
-  border-radius: 1.5rem;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 20px 36px rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(214, 227, 219, 0.92);
+  border-radius: 1.2rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(249, 252, 250, 0.97) 100%);
+  box-shadow: 0 14px 26px rgba(71, 112, 90, 0.08);
 }
 
 .business-contract-signing__hero {
   display: grid;
   gap: 1.2rem;
-  padding: 1.5rem;
+  padding: 1.35rem;
 }
 
 .business-contract-signing__toolbar {
@@ -569,7 +578,6 @@ const isActiveSigning = (recordId) =>
 .business-contract-signing__summary-card p,
 .business-contract-signing__empty p,
 .business-contract-signing__table small,
-.business-contract-signing__sync-note,
 .business-contract-signing__meta-grid strong,
 .business-contract-signing__timeline-item strong {
   color: #60786a;
@@ -617,8 +625,7 @@ const isActiveSigning = (recordId) =>
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  border: 0;
-  border-radius: 999px;
+  border-radius: 0.82rem;
   font: inherit;
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
@@ -653,7 +660,7 @@ const isActiveSigning = (recordId) =>
 }
 
 .business-contract-signing__panel {
-  padding: 1.2rem;
+  padding: 1.1rem;
 }
 
 .business-contract-signing__panel--editor {
@@ -676,10 +683,9 @@ const isActiveSigning = (recordId) =>
 }
 
 .business-contract-signing__count {
-  padding: 0.48rem 0.8rem;
-  border-radius: 999px;
-  background: #edf6f0;
-  color: #24513a;
+  padding: 0;
+  background: transparent;
+  color: inherit;
   font-size: 0.78rem;
   font-weight: 700;
 }
@@ -687,7 +693,8 @@ const isActiveSigning = (recordId) =>
 .business-contract-signing__table-shell {
   overflow: auto;
   border: 1px solid rgba(223, 232, 226, 0.95);
-  border-radius: 1.1rem;
+  border-radius: 1rem;
+  background: #ffffff;
 }
 
 .business-contract-signing__table {
@@ -779,18 +786,21 @@ const isActiveSigning = (recordId) =>
 .business-contract-signing__button {
   padding: 0.72rem 1rem;
   font-weight: 700;
+  border: 1px solid transparent;
 }
 
 .business-contract-signing__row-button,
 .business-contract-signing__button--secondary {
-  background: #edf4ef;
-  color: #244534;
+  border-color: #d7dfd9;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f9f7 100%);
+  color: #305141;
 }
 
 .business-contract-signing__button--primary {
-  background: linear-gradient(135deg, #198754, #2f9f6c);
-  color: #fff;
-  box-shadow: 0 16px 26px rgba(25, 135, 84, 0.2);
+  border-color: #cfe6d7;
+  background: linear-gradient(180deg, #ffffff 0%, #eef8f2 100%);
+  color: #1f6f46;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
 .business-contract-signing__button:disabled,
@@ -813,9 +823,9 @@ const isActiveSigning = (recordId) =>
 .business-contract-signing__field textarea {
   width: 100%;
   border: 1px solid rgba(203, 213, 208, 0.96);
-  border-radius: 1rem;
+  border-radius: 0;
   padding: 0.82rem 0.95rem;
-  background: #fbfdfb;
+  background: #ffffff;
   color: #183126;
   font: inherit;
 }
@@ -840,7 +850,7 @@ const isActiveSigning = (recordId) =>
   justify-content: center;
   min-height: 2.45rem;
   padding: 0.7rem 1rem;
-  border-radius: 999px;
+  border-radius: 0.82rem;
   background: rgba(148, 163, 184, 0.14);
   color: #475569;
   font-size: 0.8rem;
@@ -855,8 +865,8 @@ const isActiveSigning = (recordId) =>
 
 .business-contract-signing__timeline-item {
   padding: 0.9rem 1rem;
-  border-radius: 1rem;
-  background: #f6faf7;
+  border-radius: 0.95rem;
+  background: #ffffff;
   border: 1px solid rgba(223, 232, 226, 0.95);
 }
 
@@ -864,9 +874,9 @@ const isActiveSigning = (recordId) =>
   display: grid;
   gap: 0.5rem;
   padding: 1rem;
-  border-radius: 1rem;
+  border-radius: 0.95rem;
   border: 1px solid rgba(223, 232, 226, 0.95);
-  background: #f9fcfa;
+  background: #ffffff;
 }
 
 .business-contract-signing__signature-preview img {
@@ -890,7 +900,7 @@ const isActiveSigning = (recordId) =>
   min-height: 18rem;
   text-align: center;
   padding: 1.5rem;
-  border-radius: 1.25rem;
+  border-radius: 1rem;
   border: 1px dashed rgba(192, 205, 197, 0.95);
   background: #fbfdfb;
 }

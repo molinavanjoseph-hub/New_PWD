@@ -55,7 +55,13 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
           <div class="applicant-job-offers-page__card-head">
             <div class="applicant-job-offers-page__identity">
               <span class="applicant-job-offers-page__avatar" aria-hidden="true">
-                {{ getCompanyInitial(record.company) }}
+                <img
+                  v-if="record.logoUrl"
+                  :src="record.logoUrl"
+                  alt=""
+                  class="applicant-job-offers-page__avatar-image"
+                />
+                <template v-else>{{ getCompanyInitial(record.company) }}</template>
               </span>
 
               <div class="applicant-job-offers-page__identity-copy">
@@ -233,11 +239,20 @@ const getCompanyInitial = (value) => String(value || 'J').trim().charAt(0).toUpp
   width: 2.9rem;
   aspect-ratio: 1;
   border: 1px solid rgba(66, 112, 87, 0.16);
+  border-radius: 0.9rem;
   background: linear-gradient(135deg, rgba(220, 242, 228, 0.94), rgba(247, 252, 249, 0.96));
   color: #1d573b;
   font-size: 1rem;
   font-weight: 800;
+  overflow: hidden;
   text-transform: uppercase;
+}
+
+.applicant-job-offers-page__avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .applicant-job-offers-page__identity-copy {

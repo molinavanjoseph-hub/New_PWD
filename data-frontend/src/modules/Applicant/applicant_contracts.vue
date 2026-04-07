@@ -38,15 +38,89 @@ const emit = defineEmits([
   'refresh-provider-status',
 ])
 
+const normalizeContractStatus = (value) => String(value || '').trim().toLowerCase()
+const getContractCompanyLabel = (record = {}) =>
+  String(record?.companyName || 'Business Workspace').trim() || 'Business Workspace'
+const getContractRoleLabel = (record = {}) =>
+  String(record?.jobTitle || 'Applied Role').trim() || 'Applied Role'
+const getContractHeadline = (record = {}) =>
+  String(record?.contractTitle || getContractRoleLabel(record) || 'Employment Contract').trim() || 'Employment Contract'
+const getContractStatusLabel = (record = {}) =>
+  String(record?.statusLabel || 'Pending').trim() || 'Pending'
+const getContractActivityLabel = (record = {}) =>
+  String(record?.sentAtLabel || record?.startDate || '').trim() || 'Recently'
+const getContractLogoUrl = (record = {}) =>
+  String(
+    record?.logoUrl
+      || record?.companyLogoUrl
+      || record?.profileImageUrl
+      || record?.businessAvatar
+      || record?.business_avatar
+      || '',
+  ).trim()
+const getContractCompanyInitials = (value) =>
+  String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((item) => item.charAt(0).toUpperCase())
+    .join('') || 'CT'
+
+const getContractToneClass = (record = {}) => {
+  const tone = String(record?.statusTone || '').trim().toLowerCase()
+  if (tone === 'success') return 'is-success'
+  if (tone === 'danger') return 'is-danger'
+  if (tone === 'warning') return 'is-warning'
+  if (['info', 'accent'].includes(tone)) return 'is-info'
+
+  const status = normalizeContractStatus(record?.status)
+  if (status === 'completed') return 'is-success'
+  if (status === 'applicant_signed') return 'is-info'
+  if (status === 'sent') return 'is-warning'
+  if (status === 'cancelled') return 'is-danger'
+  return 'muted'
+}
+
+const getContractDescriptor = (record = {}) => {
+  const employmentType = String(record?.employmentType || '').trim()
+  const roleLabel = getContractRoleLabel(record)
+
+  if (employmentType && roleLabel) return `${employmentType} for ${roleLabel}`
+  return employmentType || roleLabel || 'Contract details available'
+}
+
+const getContractPreview = (record = {}) => {
+  const status = normalizeContractStatus(record?.status)
+  const companyLabel = getContractCompanyLabel(record)
+  const roleLabel = getContractRoleLabel(record)
+
+  if (status === 'completed') {
+    return `This contract for ${roleLabel} is fully signed by you and ${companyLabel}.`
+  }
+
+  if (status === 'applicant_signed') {
+    return `Your signature was returned to ${companyLabel}. Waiting for the business countersign.`
+  }
+
+  if (status === 'sent') {
+    return `Review the ${roleLabel} offer, check the agreement, and sign when ready.`
+  }
+
+  if (status === 'cancelled') {
+    return `This contract thread was closed by ${companyLabel}.`
+  }
+
+  return `Review the contract shared by ${companyLabel} for ${roleLabel}.`
+}
+
 const activeContract = computed(() =>
   props.contracts.find((record) => String(record?.id || '').trim() === String(props.activeContractId || '').trim())
   || props.contracts[0]
   || null,
 )
-const canApplicantSign = computed(() => {
-  const status = String(activeContract.value?.status || '').trim().toLowerCase()
-  return ['sent'].includes(status)
-})
+
+const canApplicantSign = computed(() => normalizeContractStatus(activeContract.value?.status) === 'sent')
 const activeSubmitState = computed(() =>
   String(props.activeSubmittingContractId || '').trim()
   && String(activeContract.value?.id || '').trim() === String(props.activeSubmittingContractId || '').trim(),
@@ -55,6 +129,74 @@ const activeProviderState = computed(() =>
   String(props.activeProviderContractId || '').trim()
   && String(activeContract.value?.id || '').trim() === String(props.activeProviderContractId || '').trim(),
 )
+
+const contractStats = computed(() => {
+  const records = Array.isArray(props.contracts) ? props.contracts : []
+
+  return [
+    {
+      id: 'total',
+      label: 'Total',
+      value: records.length,
+    },
+    {
+      id: 'waiting',
+      label: 'Need Signature',
+      value: records.filter((item) => normalizeContractStatus(item?.status) === 'sent').length,
+    },
+    {
+      id: 'returned',
+      label: 'Sent Back',
+      value: records.filter((item) => normalizeContractStatus(item?.status) === 'applicant_signed').length,
+    },
+    {
+      id: 'completed',
+      label: 'Completed',
+      value: records.filter((item) => normalizeContractStatus(item?.status) === 'completed').length,
+    },
+  ]
+})
+
+const contractProgressToneClass = computed(() => {
+  const status = normalizeContractStatus(activeContract.value?.status)
+  if (status === 'completed') return 'is-success'
+  if (status === 'cancelled') return 'is-danger'
+  if (status === 'applicant_signed') return 'is-info'
+  if (status === 'sent') return 'is-warning'
+  return ''
+})
+
+const contractProgressTitle = computed(() => {
+  const status = normalizeContractStatus(activeContract.value?.status)
+  if (status === 'completed') return 'Contract completed'
+  if (status === 'cancelled') return 'Contract closed'
+  if (status === 'applicant_signed') return 'Waiting for business countersign'
+  if (status === 'sent') return 'Ready for your signature'
+  return 'Contract in progress'
+})
+
+const contractProgressMessage = computed(() => {
+  const status = normalizeContractStatus(activeContract.value?.status)
+
+  if (status === 'completed') {
+    return 'Both you and the business owner completed the signing flow for this contract.'
+  }
+
+  if (status === 'cancelled') {
+    return 'This contract is not active anymore.'
+  }
+
+  if (status === 'applicant_signed') {
+    return 'Your signature was already submitted. The business can now countersign the agreement.'
+  }
+
+  if (status === 'sent') {
+    return 'Review the agreement carefully, confirm your consent, and sign the contract when you are ready.'
+  }
+
+  return 'This contract is still being prepared by the business workspace.'
+})
+
 const emptyStateHighlights = [
   {
     id: 'wait',
@@ -66,13 +208,13 @@ const emptyStateHighlights = [
     id: 'review',
     icon: 'bi bi-file-earmark-text',
     label: 'Review the details',
-    copy: 'Read the job title, salary offer, start date, and notes before you add your signature.',
+    copy: 'Check the job title, salary offer, start date, and employment type before signing.',
   },
   {
     id: 'sign',
     icon: 'bi bi-pencil-square',
     label: 'Sign digitally',
-    copy: 'Draw your signature electronically, confirm consent, and return the document to the business.',
+    copy: 'Draw your signature electronically, confirm consent, and send the contract back to the business.',
   },
 ]
 
@@ -91,138 +233,170 @@ const submitSignature = (payload = {}) => {
 </script>
 
 <template>
-  <section class="applicant-contracts">
-    <section class="applicant-contracts__grid">
-      <aside class="applicant-contracts__rail">
-        <article class="applicant-contracts__summary-card">
-          <div class="applicant-contracts__summary-head">
-            <span class="applicant-contracts__summary-badge">Applicant</span>
-            <span class="applicant-contracts__summary-status">Contracts</span>
-          </div>
+  <section class="applicant-contracts-page">
+    <section v-if="contracts.length" class="applicant-contracts-page__hero">
+      <div class="applicant-contracts-page__hero-copy">
+        <p class="applicant-contracts-page__eyebrow">Contract Signing</p>
+        <h1>My Contracts</h1>
+        <p class="applicant-contracts-page__intro">
+          Review each agreement, confirm the offer details, and complete your digital signature when the contract is ready.
+        </p>
+      </div>
 
-          <div class="applicant-contracts__identity">
-            <p class="applicant-contracts__eyebrow">Digital Signing</p>
-            <h2>Contract Review</h2>
-            <p>Open the contract sent by the business, review the agreement, and sign it electronically.</p>
-          </div>
+      <div class="applicant-contracts-page__hero-side">
+        <div class="applicant-contracts-page__stats">
+          <article v-for="item in contractStats" :key="item.id">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </article>
+        </div>
+      </div>
+    </section>
 
-          <div class="applicant-contracts__mini-list">
-            <div class="applicant-contracts__mini-item">
-              <span><i class="bi bi-inbox" aria-hidden="true" /> Total Contracts</span>
-              <strong>{{ contracts.length }}</strong>
-            </div>
-            <div class="applicant-contracts__mini-item">
-              <span><i class="bi bi-hourglass-split" aria-hidden="true" /> Waiting for My Signature</span>
-              <strong>{{ contracts.filter((item) => item.status === 'sent').length }}</strong>
-            </div>
-            <div class="applicant-contracts__mini-item">
-              <span><i class="bi bi-send-check" aria-hidden="true" /> Sent Back to Business</span>
-              <strong>{{ contracts.filter((item) => item.status === 'applicant_signed').length }}</strong>
-            </div>
-            <div class="applicant-contracts__mini-item">
-              <span><i class="bi bi-patch-check" aria-hidden="true" /> Fully Completed</span>
-              <strong>{{ contracts.filter((item) => item.status === 'completed').length }}</strong>
-            </div>
-          </div>
-        </article>
-      </aside>
-
-      <article class="applicant-contracts__panel">
-        <div class="applicant-contracts__head">
-          <div>
-            <h3>My Contracts</h3>
-            <span>Review, sign, and send contracts back to the business.</span>
-          </div>
-          <span class="applicant-contracts__head-count">
-            {{ contracts.length }} contract<span v-if="contracts.length !== 1">s</span>
-          </span>
+    <div v-if="contracts.length" class="applicant-contracts-page__shell">
+      <aside class="applicant-contracts-page__list-pane">
+        <div class="applicant-contracts-page__filters">
+          <span>Contract Threads</span>
+          <small>Select a contract to review the agreement and signing steps.</small>
         </div>
 
-        <div v-if="contracts.length" class="applicant-contracts__layout">
-          <section class="applicant-contracts__list">
-            <button
-              v-for="contract in contracts"
-              :key="contract.id"
-              type="button"
-              class="applicant-contracts__list-item"
-              :class="{ 'is-active': activeContract && activeContract.id === contract.id }"
-              @click="selectContract(contract.id)"
-            >
-              <div class="applicant-contracts__list-top">
-                <strong>{{ contract.contractTitle }}</strong>
-                <span class="applicant-status-pill" :class="`applicant-status-pill--${contract.statusTone}`">
-                  {{ contract.statusLabel }}
+        <div class="applicant-contracts-page__threads">
+          <button
+            v-for="contract in contracts"
+            :key="contract.id"
+            type="button"
+            class="applicant-contracts-page__thread"
+            :class="{ 'is-active': activeContract?.id === contract.id }"
+            @click="selectContract(contract.id)"
+          >
+            <span class="applicant-contracts-page__avatar" aria-hidden="true">
+              <img
+                v-if="getContractLogoUrl(contract)"
+                :src="getContractLogoUrl(contract)"
+                alt=""
+                class="applicant-contracts-page__avatar-image"
+              />
+              <template v-else>{{ getContractCompanyInitials(contract.companyName) }}</template>
+            </span>
+
+            <span class="applicant-contracts-page__thread-copy">
+              <span class="applicant-contracts-page__thread-top">
+                <strong>{{ getContractCompanyLabel(contract) }}</strong>
+                <small>{{ getContractActivityLabel(contract) }}</small>
+              </span>
+
+              <span class="applicant-contracts-page__thread-subject">
+                {{ getContractHeadline(contract) }}
+              </span>
+
+              <span class="applicant-contracts-page__thread-preview">
+                {{ getContractPreview(contract) }}
+              </span>
+
+              <span class="applicant-contracts-page__thread-tags">
+                <span>{{ getContractRoleLabel(contract) }}</span>
+                <span class="badge" :class="getContractToneClass(contract)">
+                  {{ getContractStatusLabel(contract) }}
                 </span>
+              </span>
+            </span>
+          </button>
+        </div>
+      </aside>
+
+      <section class="applicant-contracts-page__viewer">
+        <article v-if="activeContract" class="applicant-contracts-page__message">
+          <div class="applicant-contracts-page__badges">
+            <span class="badge">Contract Notice</span>
+            <span class="badge" :class="getContractToneClass(activeContract)">
+              {{ getContractStatusLabel(activeContract) }}
+            </span>
+            <span class="badge muted">
+              {{ activeContract.employmentType || 'Employment Offer' }}
+            </span>
+          </div>
+
+          <header class="applicant-contracts-page__message-head">
+            <h2>{{ getContractHeadline(activeContract) }}</h2>
+
+            <div class="applicant-contracts-page__sender">
+              <span class="applicant-contracts-page__avatar" aria-hidden="true">
+                <img
+                  v-if="getContractLogoUrl(activeContract)"
+                  :src="getContractLogoUrl(activeContract)"
+                  alt=""
+                  class="applicant-contracts-page__avatar-image"
+                />
+                <template v-else>{{ getContractCompanyInitials(activeContract.companyName) }}</template>
+              </span>
+
+              <div>
+                <strong>{{ getContractCompanyLabel(activeContract) }}</strong>
+                <span>{{ getContractDescriptor(activeContract) }}</span>
               </div>
-              <p>{{ contract.jobTitle }}</p>
-              <small>{{ contract.companyName }}</small>
-            </button>
-          </section>
 
-          <section v-if="activeContract" class="applicant-contracts__detail">
-            <article class="applicant-contracts__document">
-              <div class="applicant-contracts__document-head">
-                <div>
-                  <p class="applicant-contracts__document-eyebrow">Contract Details</p>
-                  <h4>{{ activeContract.contractTitle }}</h4>
-                </div>
-                <span class="applicant-status-pill" :class="`applicant-status-pill--${activeContract.statusTone}`">
-                  {{ activeContract.statusLabel }}
-                </span>
-              </div>
+              <time>{{ getContractActivityLabel(activeContract) }}</time>
+            </div>
+          </header>
 
-              <div class="applicant-contracts__meta">
-                <span class="applicant-contracts__pill">
-                  <i class="bi bi-briefcase" />
-                  {{ activeContract.jobTitle }}
-                </span>
-                <span class="applicant-contracts__pill">
-                  <i class="bi bi-cash-stack" />
-                  {{ activeContract.salaryOffer || 'Salary not set' }}
-                </span>
-                <span class="applicant-contracts__pill">
-                  <i class="bi bi-calendar-event" />
-                  Start {{ activeContract.startDate || 'Not set' }}
-                </span>
-                <span class="applicant-contracts__pill">
-                  <i class="bi bi-person-badge" />
-                  {{ activeContract.employmentType || 'Employment type not set' }}
-                </span>
-              </div>
+          <div class="applicant-contracts-page__body">
+            <p>{{ getContractCompanyLabel(activeContract) }} sent you a contract for {{ getContractRoleLabel(activeContract) }}.</p>
+            <p>{{ getContractPreview(activeContract) }}</p>
+          </div>
 
-              <div class="applicant-contracts__copy">
-                <section class="applicant-contracts__section">
-                  <h5>Agreement</h5>
-                  <p>{{ activeContract.contractBody || 'No contract body was added yet.' }}</p>
-                </section>
-
-                <section v-if="activeContract.notes" class="applicant-contracts__section">
-                  <h5>Notes</h5>
-                  <p>{{ activeContract.notes }}</p>
-                </section>
-
-                <section class="applicant-contracts__section">
-                  <h5>Signing Status</h5>
-                  <div class="applicant-contracts__status-list">
-                    <div class="applicant-contracts__status-row">
-                      <span>Business sent</span>
-                      <strong>{{ activeContract.sentAtLabel || 'Not set' }}</strong>
-                    </div>
-                    <div class="applicant-contracts__status-row">
-                      <span>Applicant signed</span>
-                      <strong>{{ activeContract.applicantSignedAtLabel || 'Pending' }}</strong>
-                    </div>
-                    <div class="applicant-contracts__status-row">
-                      <span>Business countersigned</span>
-                      <strong>{{ activeContract.businessSignedAtLabel || 'Pending' }}</strong>
-                    </div>
-                  </div>
-                </section>
-              </div>
+          <div class="applicant-contracts-page__grid">
+            <article>
+              <span>Role</span>
+              <strong>{{ getContractRoleLabel(activeContract) }}</strong>
             </article>
+            <article>
+              <span>Salary Offer</span>
+              <strong>{{ activeContract.salaryOffer || 'Salary not set' }}</strong>
+            </article>
+            <article>
+              <span>Start Date</span>
+              <strong>{{ activeContract.startDate || 'Not set' }}</strong>
+            </article>
+            <article>
+              <span>Employment Type</span>
+              <strong>{{ activeContract.employmentType || 'Not set' }}</strong>
+            </article>
+            <article>
+              <span>Applicant Signed</span>
+              <strong>{{ activeContract.applicantSignedAtLabel || 'Pending' }}</strong>
+            </article>
+            <article>
+              <span>Business Signed</span>
+              <strong>{{ activeContract.businessSignedAtLabel || 'Pending' }}</strong>
+            </article>
+            <article class="wide">
+              <span>Current Step</span>
+              <strong>{{ contractProgressMessage }}</strong>
+            </article>
+          </div>
 
+          <div class="applicant-contracts-page__box">
+            <strong>Agreement</strong>
+            <div class="applicant-contracts-page__document-copy">
+              {{ activeContract.contractBody || 'No contract body was added yet.' }}
+            </div>
+          </div>
+
+          <div v-if="activeContract.notes" class="applicant-contracts-page__box">
+            <strong>Business Notes</strong>
+            <span>{{ activeContract.notes }}</span>
+          </div>
+
+          <div class="applicant-contracts-page__box" :class="contractProgressToneClass">
+            <strong>{{ contractProgressTitle }}</strong>
+            <span>{{ contractProgressMessage }}</span>
+            <span>Business sent: {{ activeContract.sentAtLabel || 'Not set' }}</span>
+            <span>Applicant signed: {{ activeContract.applicantSignedAtLabel || 'Pending' }}</span>
+            <span>Business countersigned: {{ activeContract.businessSignedAtLabel || 'Pending' }}</span>
+          </div>
+
+          <div v-if="canApplicantSign" class="applicant-contracts-page__signature-wrap">
             <DigitalSignaturePad
-              v-if="canApplicantSign"
               :signer-name="applicantSignatureName"
               :consent-checked="applicantConsentChecked"
               :is-submitting="activeSubmitState"
@@ -234,445 +408,700 @@ const submitSignature = (payload = {}) => {
               @update:consent-checked="emit('update:applicant-consent-checked', $event)"
               @submit="submitSignature"
             />
+          </div>
 
-            <div v-if="activeContract" class="applicant-contracts__provider-actions">
-              <button
-                v-if="canApplicantSign"
-                type="button"
-                class="applicant-contracts__provider-button applicant-contracts__provider-button--primary"
-                :disabled="activeProviderState"
-                @click="emit('open-provider-sign', activeContract.id)"
-              >
-                <i class="bi bi-box-arrow-up-right" aria-hidden="true" />
-                <span>{{ activeProviderState ? 'Opening Digital API...' : 'Open Digital API Sign' }}</span>
-              </button>
-              <button
-                v-if="activeContract.providerEnvelopeId"
-                type="button"
-                class="applicant-contracts__provider-button applicant-contracts__provider-button--ghost"
-                :disabled="activeProviderState"
-                @click="emit('refresh-provider-status', activeContract.id)"
-              >
-                <i class="bi bi-arrow-clockwise" aria-hidden="true" />
-                <span>Refresh API Status</span>
-              </button>
-            </div>
-
-            <article v-else class="applicant-contracts__notice-card">
-              <h5>Contract progress</h5>
-              <p v-if="activeContract.status === 'applicant_signed'">
-                Your signature was already submitted. The business can now countersign the contract.
-              </p>
-              <p v-else-if="activeContract.status === 'completed'">
-                This contract is fully signed by both sides.
-              </p>
-              <p v-else>
-                This contract is not ready for applicant signing right now.
-              </p>
-            </article>
-          </section>
-        </div>
-
-        <div v-else class="applicant-contracts__empty">
-          <section class="applicant-contracts__empty-hero">
-            <span class="applicant-contracts__empty-icon" aria-hidden="true">
-              <i class="bi bi-file-earmark-lock" />
-            </span>
-            <p class="applicant-contracts__empty-overline">Contract Signing</p>
-            <h3>No contracts yet</h3>
-            <p>Contracts sent by businesses will appear here once your application moves into the hiring offer stage.</p>
-          </section>
-
-          <section class="applicant-contracts__empty-highlights">
-            <article
-              v-for="item in emptyStateHighlights"
-              :key="item.id"
-              class="applicant-contracts__empty-highlight"
+          <div
+            v-if="canApplicantSign || activeContract.providerEnvelopeId"
+            class="applicant-contracts-page__actions"
+          >
+            <button
+              v-if="canApplicantSign"
+              type="button"
+              class="primary"
+              :disabled="activeProviderState"
+              @click="emit('open-provider-sign', activeContract.id)"
             >
-              <span class="applicant-contracts__empty-highlight-icon" aria-hidden="true">
-                <i :class="item.icon" />
-              </span>
-              <div class="applicant-contracts__empty-highlight-copy">
-                <strong>{{ item.label }}</strong>
-                <p>{{ item.copy }}</p>
-              </div>
-            </article>
-          </section>
+              {{ activeProviderState ? 'Opening Digital API...' : 'Open Digital API Sign' }}
+            </button>
+
+            <button
+              v-if="activeContract.providerEnvelopeId"
+              type="button"
+              :disabled="activeProviderState"
+              @click="emit('refresh-provider-status', activeContract.id)"
+            >
+              Refresh API Status
+            </button>
+          </div>
+        </article>
+
+        <div v-else class="applicant-contracts-page__empty">
+          <i class="bi bi-file-earmark-check" aria-hidden="true" />
+          <h2>Select a contract</h2>
+          <p>Choose a contract thread from the left side to review the agreement, offer details, and signing steps.</p>
         </div>
-      </article>
+      </section>
+    </div>
+
+    <section v-else class="applicant-contracts-page__empty-state">
+      <div class="applicant-contracts-page__empty">
+        <i class="bi bi-file-earmark-lock" aria-hidden="true" />
+        <h2>No contracts yet</h2>
+        <p>Contracts sent by businesses will appear here once your application moves into the hiring offer stage.</p>
+      </div>
+
+      <div class="applicant-contracts-page__empty-highlights">
+        <article
+          v-for="item in emptyStateHighlights"
+          :key="item.id"
+          class="applicant-contracts-page__highlight"
+        >
+          <span class="applicant-contracts-page__highlight-icon" aria-hidden="true">
+            <i :class="item.icon" />
+          </span>
+
+          <div class="applicant-contracts-page__highlight-copy">
+            <strong>{{ item.label }}</strong>
+            <p>{{ item.copy }}</p>
+          </div>
+        </article>
+      </div>
     </section>
   </section>
 </template>
 
 <style scoped>
-.applicant-contracts {
+.applicant-contracts-page {
   display: grid;
   gap: 1.25rem;
-  padding: 0 1.5rem;
-  align-content: start;
+  padding: 0 1.25rem;
   width: 100%;
-  min-height: calc(100vh - 8rem);
+  min-height: min(46rem, calc(100vh - 8.75rem));
 }
 
-.applicant-contracts__grid {
-  display: grid;
-  grid-template-columns: minmax(17rem, 19rem) minmax(0, 1fr);
-  gap: 1.25rem;
-  align-items: start;
+.applicant-contracts-page__hero,
+.applicant-contracts-page__list-pane,
+.applicant-contracts-page__viewer,
+.applicant-contracts-page__empty-state {
+  border: 1px solid rgba(66, 112, 87, 0.18);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 18px 36px rgba(31, 74, 51, 0.07);
 }
 
-.applicant-contracts__rail {
-  display: grid;
-  position: sticky;
-  top: 6rem;
-}
-
-.applicant-contracts__summary-card,
-.applicant-contracts__panel,
-.applicant-contracts__document,
-.applicant-contracts__notice-card,
-.applicant-contracts__provider-actions {
-  display: grid;
-  gap: 1rem;
-  padding: 1.25rem;
-  border: 1px solid rgba(129, 169, 143, 0.18);
-  border-radius: 1.35rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 251, 247, 0.95) 100%);
-  box-shadow:
-    0 20px 40px rgba(79, 129, 102, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92);
-}
-
-.applicant-contracts__provider-actions {
-  grid-template-columns: repeat(auto-fit, minmax(12rem, max-content));
-  align-items: center;
-  justify-content: start;
-}
-
-.applicant-contracts__provider-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.55rem;
-  min-height: 2.8rem;
-  padding: 0.75rem 1rem;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  font-size: 0.9rem;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.applicant-contracts__provider-button:disabled {
-  cursor: wait;
-  opacity: 0.75;
-}
-
-.applicant-contracts__provider-button--primary {
-  background: linear-gradient(135deg, #2f8f5b 0%, #256a44 100%);
-  color: #fff;
-  box-shadow: 0 14px 30px rgba(47, 143, 91, 0.18);
-}
-
-.applicant-contracts__provider-button--ghost {
-  border-color: rgba(129, 169, 143, 0.28);
-  background: #fff;
-  color: #274333;
-}
-
-.applicant-contracts__summary-card {
-  background:
-    radial-gradient(circle at top right, rgba(208, 241, 221, 0.62), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(245, 251, 247, 0.98) 100%);
-}
-
-.applicant-contracts__summary-head,
-.applicant-contracts__head,
-.applicant-contracts__document-head,
-.applicant-contracts__list-top {
+.applicant-contracts-page__hero {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 1.25rem;
+  padding: 1.4rem 1.5rem;
+  background:
+    radial-gradient(circle at top left, rgba(214, 241, 227, 0.85), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(246, 252, 249, 0.98));
 }
 
-.applicant-contracts__summary-badge,
-.applicant-contracts__summary-status,
-.applicant-contracts__head-count,
-.applicant-contracts__pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2rem;
-  border: 1px solid rgba(190, 206, 197, 0.95);
-  border-radius: 999px;
-  padding: 0 0.82rem;
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.applicant-contracts__summary-badge {
-  color: #45574f;
-  background: #f8fbf8;
-}
-
-.applicant-contracts__summary-status {
-  color: #1d6b3a;
-  background: #eef8f1;
-}
-
-.applicant-contracts__identity,
-.applicant-contracts__identity h2,
-.applicant-contracts__identity p,
-.applicant-contracts__eyebrow,
-.applicant-contracts__head h3,
-.applicant-contracts__document h4,
-.applicant-contracts__document p,
-.applicant-contracts__empty h3,
-.applicant-contracts__empty p {
+.applicant-contracts-page__eyebrow,
+.applicant-contracts-page__intro,
+.applicant-contracts-page__hero h1 {
   margin: 0;
 }
 
-.applicant-contracts__eyebrow,
-.applicant-contracts__document-eyebrow,
-.applicant-contracts__empty-overline {
-  color: #6c8376;
-  font-size: 0.7rem;
+.applicant-contracts-page__eyebrow {
+  font-size: 0.74rem;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  color: #577564;
 }
 
-.applicant-contracts__identity h2 {
-  color: #16271f;
-  font-size: clamp(1.45rem, 2vw, 1.75rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
+.applicant-contracts-page__hero h1 {
+  color: #183927;
+  font-size: clamp(1.8rem, 2vw, 2.2rem);
+  line-height: 1.05;
 }
 
-.applicant-contracts__identity p:last-child {
-  color: #5f7268;
-  font-size: 0.86rem;
+.applicant-contracts-page__intro {
+  color: #557061;
+  font-size: 0.97rem;
   line-height: 1.65;
+  max-width: 38rem;
 }
 
-.applicant-contracts__mini-list,
-.applicant-contracts__meta,
-.applicant-contracts__status-list,
-.applicant-contracts__empty-highlights {
+.applicant-contracts-page__hero-side {
   display: grid;
   gap: 0.85rem;
+  min-width: min(100%, 22rem);
 }
 
-.applicant-contracts__mini-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.applicant-contracts__mini-item,
-.applicant-contracts__list-item,
-.applicant-contracts__empty-highlight {
+.applicant-contracts-page__stats {
   display: grid;
-  gap: 0.45rem;
-  padding: 0.95rem 1rem;
-  border: 1px solid rgba(193, 206, 214, 0.92);
-  border-radius: 1.05rem;
-  background: rgba(255, 255, 255, 0.94);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
 }
 
-.applicant-contracts__mini-item span,
-.applicant-contracts__head span,
-.applicant-contracts__list-item p,
-.applicant-contracts__list-item small,
-.applicant-contracts__copy p,
-.applicant-contracts__status-row span,
-.applicant-contracts__notice-card p,
-.applicant-contracts__empty-highlight-copy p {
-  color: #5f7268;
+.applicant-contracts-page__stats article,
+.applicant-contracts-page__grid article,
+.applicant-contracts-page__box {
+  border: 1px solid rgba(83, 128, 98, 0.16);
+  background: rgba(248, 252, 249, 0.96);
 }
 
-.applicant-contracts__mini-item strong,
-.applicant-contracts__head h3,
-.applicant-contracts__document h4,
-.applicant-contracts__copy h5,
-.applicant-contracts__status-row strong,
-.applicant-contracts__notice-card h5,
-.applicant-contracts__empty-highlight-copy strong,
-.applicant-contracts__list-item strong {
-  color: #183126;
-}
-
-.applicant-contracts__panel {
-  min-height: clamp(34rem, calc(100vh - 10rem), 46rem);
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.applicant-contracts__layout {
+.applicant-contracts-page__stats article {
   display: grid;
-  grid-template-columns: minmax(15rem, 18rem) minmax(0, 1fr);
-  gap: 1rem;
+  gap: 0.24rem;
+  padding: 0.8rem 0.9rem;
+}
+
+.applicant-contracts-page__stats span,
+.applicant-contracts-page__grid span {
+  color: #6e887a;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.applicant-contracts-page__stats strong {
+  color: #173a28;
+  font-size: 1.24rem;
+  line-height: 1;
+}
+
+.applicant-contracts-page__shell {
+  display: grid;
+  grid-template-columns: minmax(19rem, 26rem) minmax(0, 1fr);
+  gap: 1.2rem;
   min-height: 0;
 }
 
-.applicant-contracts__list {
+.applicant-contracts-page__list-pane {
   display: grid;
-  gap: 0.8rem;
-  align-content: start;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
-.applicant-contracts__list-item {
-  text-align: left;
-  cursor: pointer;
-}
-
-.applicant-contracts__list-item.is-active {
-  border-color: rgba(27, 138, 84, 0.42);
-  box-shadow: 0 18px 30px rgba(27, 138, 84, 0.12);
-}
-
-.applicant-contracts__detail {
+.applicant-contracts-page__filters {
   display: grid;
-  gap: 1rem;
-  align-content: start;
+  gap: 0.18rem;
+  padding: 1rem;
+  border-bottom: 1px solid rgba(83, 128, 98, 0.14);
+  background: linear-gradient(180deg, rgba(247, 252, 249, 0.95), rgba(255, 255, 255, 0.95));
 }
 
-.applicant-contracts__meta {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.applicant-contracts__pill {
-  gap: 0.45rem;
-  justify-content: flex-start;
-  min-height: 2.3rem;
-  background: #f9fbfa;
-  color: #355646;
-}
-
-.applicant-contracts__copy {
-  display: grid;
-  gap: 1rem;
-}
-
-.applicant-contracts__section {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.applicant-contracts__section h5 {
+.applicant-contracts-page__filters span,
+.applicant-contracts-page__filters small {
   margin: 0;
-  font-size: 0.9rem;
+}
+
+.applicant-contracts-page__filters span {
+  color: #355745;
+  font-size: 0.88rem;
   font-weight: 800;
 }
 
-.applicant-contracts__copy p,
-.applicant-contracts__notice-card p,
-.applicant-contracts__empty > .applicant-contracts__empty-hero > p:last-of-type {
-  font-size: 0.84rem;
-  line-height: 1.65;
+.applicant-contracts-page__filters small {
+  color: #6f8a7b;
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
-.applicant-contracts__status-row {
+.applicant-contracts-page__threads {
+  display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 0;
+  overflow-y: auto;
+}
+
+.applicant-contracts-page__thread {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.85rem;
+  align-items: flex-start;
+  align-content: start;
+  padding: 1rem;
+  border: 0;
+  border-bottom: 1px solid rgba(83, 128, 98, 0.12);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.applicant-contracts-page__thread:hover {
+  background: rgba(242, 248, 245, 0.92);
+}
+
+.applicant-contracts-page__thread.is-active {
+  background: linear-gradient(90deg, rgba(216, 242, 226, 0.92), rgba(255, 255, 255, 0.98));
+  box-shadow: inset 4px 0 0 #2d9360;
+}
+
+.applicant-contracts-page__avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 2.75rem;
+  aspect-ratio: 1;
+  border: 1px solid rgba(83, 128, 98, 0.18);
+  border-radius: 0.9rem;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(225, 243, 233, 0.95), rgba(247, 252, 249, 0.96));
+  color: #1c5138;
+  font-size: 0.86rem;
+  font-weight: 800;
+  flex-shrink: 0;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.applicant-contracts-page__avatar-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.applicant-contracts-page__thread-copy,
+.applicant-contracts-page__body,
+.applicant-contracts-page__sender > div {
+  display: grid;
+  align-content: start;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.applicant-contracts-page__thread-top {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: flex-start;
   gap: 0.75rem;
-  min-height: 2.7rem;
-  padding: 0.75rem 0.9rem;
-  border: 1px solid rgba(213, 221, 216, 0.95);
-  border-radius: 0.95rem;
-  background: #f9fbfa;
 }
 
-.applicant-contracts__empty {
-  min-height: 100%;
+.applicant-contracts-page__thread-top strong,
+.applicant-contracts-page__thread-subject,
+.applicant-contracts-page__body p,
+.applicant-contracts-page__grid strong,
+.applicant-contracts-page__box span,
+.applicant-contracts-page__box strong,
+.applicant-contracts-page__sender span,
+.applicant-contracts-page__sender time,
+.applicant-contracts-page__document-copy {
+  overflow-wrap: anywhere;
+}
+
+.applicant-contracts-page__thread-top strong,
+.applicant-contracts-page__sender strong {
+  color: #193826;
+  font-size: 0.95rem;
+}
+
+.applicant-contracts-page__thread-top small,
+.applicant-contracts-page__sender span,
+.applicant-contracts-page__sender time {
+  color: #6f8a7b;
+  font-size: 0.8rem;
+}
+
+.applicant-contracts-page__thread-top small {
+  white-space: nowrap;
+}
+
+.applicant-contracts-page__thread-subject {
+  color: #264937;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.applicant-contracts-page__thread-preview {
+  display: -webkit-box;
+  color: #6b8577;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.applicant-contracts-page__thread-tags,
+.applicant-contracts-page__badges,
+.applicant-contracts-page__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.applicant-contracts-page__thread-tags {
+  gap: 0.55rem;
+  align-items: center;
+  color: #62806e;
+  font-size: 0.78rem;
+}
+
+.applicant-contracts-page__thread-tags span,
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.24rem 0.5rem;
+  border: 1px solid rgba(83, 128, 98, 0.16);
+  border-radius: 999px;
+  background: rgba(244, 250, 246, 0.92);
+  color: #2a5c42;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.badge.is-info {
+  background: rgba(225, 239, 248, 0.95);
+  color: #285f86;
+}
+
+.badge.is-success {
+  background: rgba(221, 245, 231, 0.95);
+  color: #176742;
+}
+
+.badge.is-warning {
+  background: rgba(255, 245, 219, 0.96);
+  color: #996d00;
+}
+
+.badge.is-danger {
+  background: rgba(252, 232, 232, 0.94);
+  color: #a03636;
+}
+
+.badge.muted {
+  background: rgba(237, 240, 240, 0.96);
+  color: #536665;
+}
+
+.applicant-contracts-page__viewer {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.applicant-contracts-page__message,
+.applicant-contracts-page__empty {
+  width: 100%;
+}
+
+.applicant-contracts-page__message {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(17rem, 21rem);
+  gap: 1.2rem;
+  padding: 1.45rem 1.55rem 1.65rem;
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(249, 253, 251, 0.98), rgba(255, 255, 255, 0.98) 22%);
+}
+
+.applicant-contracts-page__message-head {
+  display: grid;
   gap: 1rem;
-  align-items: stretch;
-  padding: 1.2rem;
-  border: 1px dashed rgba(179, 203, 188, 0.98);
-  border-radius: 1.3rem;
-  background:
-    radial-gradient(circle at top left, rgba(233, 247, 238, 0.92), transparent 32%),
-    linear-gradient(180deg, rgba(253, 255, 253, 0.98) 0%, rgba(244, 250, 246, 0.96) 100%);
+  padding-bottom: 1.1rem;
+  border-bottom: 1px solid rgba(83, 128, 98, 0.16);
 }
 
-.applicant-contracts__empty-hero,
-.applicant-contracts__empty-highlights {
+.applicant-contracts-page__message-head h2,
+.applicant-contracts-page__empty h2,
+.applicant-contracts-page__empty p {
+  margin: 0;
+}
+
+.applicant-contracts-page__message-head h2 {
+  color: #173a28;
+  font-size: clamp(1.35rem, 1.8vw, 1.8rem);
+  line-height: 1.2;
+}
+
+.applicant-contracts-page__sender {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.9rem;
+  align-items: flex-start;
+}
+
+.applicant-contracts-page__body {
+  gap: 0.55rem;
+}
+
+.applicant-contracts-page__body p {
+  margin: 0;
+  color: #4c6558;
+  font-size: 0.96rem;
+  line-height: 1.72;
+}
+
+.applicant-contracts-page__body p:first-child {
+  color: #274737;
+  font-size: 1rem;
+}
+
+.applicant-contracts-page__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.05rem 1.3rem;
+  padding: 1.15rem 0;
+  border-top: 1px solid rgba(83, 128, 98, 0.14);
+  border-bottom: 1px solid rgba(83, 128, 98, 0.14);
+}
+
+.applicant-contracts-page__grid article {
+  display: grid;
+  gap: 0.34rem;
+  min-height: 3.55rem;
+  padding: 0 0 0 1rem;
+  border: 0;
+  border-left: 2px solid rgba(83, 128, 98, 0.18);
+  background: transparent;
+}
+
+.applicant-contracts-page__grid article.wide {
+  grid-column: 1 / -1;
+}
+
+.applicant-contracts-page__grid strong {
+  color: #183927;
+  font-size: 0.96rem;
+  line-height: 1.6;
+}
+
+.applicant-contracts-page__box {
+  display: grid;
+  gap: 0.72rem;
+  padding: 1rem 0 0 1rem;
+  border: 0;
+  border-top: 1px solid rgba(83, 128, 98, 0.14);
+  border-left: 2px solid rgba(83, 128, 98, 0.18);
+  background: transparent;
+}
+
+.applicant-contracts-page__box strong {
+  color: #20312a;
+  font-size: 0.9rem;
+}
+
+.applicant-contracts-page__box span,
+.applicant-contracts-page__document-copy {
+  color: #63756d;
+  font-size: 0.84rem;
+  line-height: 1.68;
+}
+
+.applicant-contracts-page__box.is-danger {
+  border-left-color: rgba(239, 68, 68, 0.42);
+}
+
+.applicant-contracts-page__box.is-danger strong,
+.applicant-contracts-page__box.is-danger span {
+  color: #991b1b;
+}
+
+.applicant-contracts-page__box.is-success {
+  border-left-color: rgba(34, 197, 94, 0.4);
+}
+
+.applicant-contracts-page__box.is-success strong,
+.applicant-contracts-page__box.is-success span {
+  color: #166534;
+}
+
+.applicant-contracts-page__box.is-info {
+  border-left-color: rgba(37, 99, 235, 0.28);
+}
+
+.applicant-contracts-page__box.is-warning {
+  border-left-color: rgba(217, 119, 6, 0.32);
+}
+
+.applicant-contracts-page__document-copy {
+  white-space: pre-line;
+}
+
+.applicant-contracts-page__signature-wrap {
+  padding-top: 0.1rem;
+}
+
+.applicant-contracts-page__signature-wrap :deep(.digital-signature-pad) {
+  border: 1px solid rgba(83, 128, 98, 0.16);
+  border-radius: 1.05rem;
+  background: rgba(248, 252, 249, 0.96);
+  box-shadow: none;
+}
+
+.applicant-contracts-page__signature-wrap :deep(.digital-signature-pad__submit) {
+  border: 1px solid #2f6a49;
+  background: #2f6a49;
+  color: #ffffff;
+}
+
+.applicant-contracts-page__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.62rem 0.8rem;
+  border: 1px solid rgba(83, 128, 98, 0.18);
+  border-radius: 0.9rem;
+  background: #fff;
+  color: #355745;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.applicant-contracts-page__actions button:hover {
+  transform: translateY(-1px);
+}
+
+.applicant-contracts-page__actions button.primary {
+  background: #2f6a49;
+  border-color: #2f6a49;
+  color: #fff;
+}
+
+.applicant-contracts-page__actions button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.applicant-contracts-page__empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.8rem;
+  padding: 2rem;
+  text-align: center;
+  color: #5f7a6b;
+}
+
+.applicant-contracts-page__empty i {
+  font-size: 2rem;
+  color: #4a7b5f;
+}
+
+.applicant-contracts-page__empty-state {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem);
+  gap: 1rem;
+  padding: 1.2rem;
+  align-items: stretch;
+}
+
+.applicant-contracts-page__empty-highlights {
+  display: grid;
+  gap: 0.8rem;
   align-content: center;
 }
 
-.applicant-contracts__empty-hero {
-  gap: 0.8rem;
-}
-
-.applicant-contracts__empty-icon,
-.applicant-contracts__empty-highlight-icon {
-  display: inline-grid;
-  place-items: center;
-}
-
-.applicant-contracts__empty-icon {
-  width: 4rem;
-  height: 4rem;
-  border-radius: 1.2rem;
-  background: linear-gradient(135deg, rgba(28, 138, 84, 0.15), rgba(95, 186, 128, 0.08));
-  color: #1b8a54;
-}
-
-.applicant-contracts__empty-highlight {
+.applicant-contracts-page__highlight {
+  display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.85rem;
   align-items: start;
+  padding: 1rem;
+  border: 1px solid rgba(83, 128, 98, 0.14);
+  background: rgba(248, 252, 249, 0.96);
 }
 
-.applicant-contracts__empty-highlight-icon {
-  width: 2.35rem;
-  height: 2.35rem;
+.applicant-contracts-page__highlight-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 2.45rem;
+  height: 2.45rem;
   border-radius: 0.9rem;
   background: rgba(29, 107, 58, 0.1);
   color: #1d6b3a;
 }
 
-.applicant-contracts__empty-highlight-copy {
+.applicant-contracts-page__highlight-copy {
   display: grid;
   gap: 0.3rem;
 }
 
-@media (max-width: 1080px) {
-  .applicant-contracts__grid,
-  .applicant-contracts__layout,
-  .applicant-contracts__empty {
-    grid-template-columns: 1fr;
-  }
+.applicant-contracts-page__highlight-copy strong,
+.applicant-contracts-page__highlight-copy p {
+  margin: 0;
+}
 
-  .applicant-contracts__rail {
-    position: static;
-    top: auto;
-  }
+.applicant-contracts-page__highlight-copy strong {
+  color: #173a28;
+  font-size: 0.92rem;
+}
 
-  .applicant-contracts__panel {
+.applicant-contracts-page__highlight-copy p {
+  color: #5f7a6b;
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+@media (max-width: 1180px) {
+  .applicant-contracts-page {
     min-height: auto;
+  }
+
+  .applicant-contracts-page__hero,
+  .applicant-contracts-page__shell,
+  .applicant-contracts-page__empty-state {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .applicant-contracts-page__hero-side {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .applicant-contracts-page__list-pane {
+    max-height: 28rem;
+  }
+
+  .applicant-contracts-page__viewer {
+    min-height: 30rem;
   }
 }
 
 @media (max-width: 720px) {
-  .applicant-contracts {
-    padding: 0 0.9rem;
-    min-height: auto;
+  .applicant-contracts-page {
+    padding: 0 0.85rem;
   }
 
-  .applicant-contracts__summary-head,
-  .applicant-contracts__head,
-  .applicant-contracts__document-head,
-  .applicant-contracts__list-top,
-  .applicant-contracts__status-row {
-    flex-direction: column;
-    align-items: flex-start;
+  .applicant-contracts-page__hero,
+  .applicant-contracts-page__message,
+  .applicant-contracts-page__empty-state {
+    padding-inline: 1rem;
   }
 
-  .applicant-contracts__mini-list,
-  .applicant-contracts__meta {
+  .applicant-contracts-page__stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .applicant-contracts-page__sender,
+  .applicant-contracts-page__grid {
     grid-template-columns: 1fr;
+  }
+
+  .applicant-contracts-page__grid article.wide {
+    grid-column: auto;
+  }
+
+  .applicant-contracts-page__actions {
+    flex-direction: column;
+  }
+
+  .applicant-contracts-page__actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .applicant-contracts-page__thread-top {
+    flex-direction: column;
+  }
+
+  .applicant-contracts-page__thread-top small {
+    white-space: normal;
   }
 }
 </style>

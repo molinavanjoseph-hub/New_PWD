@@ -632,7 +632,7 @@ export const createRecruitmentState = (ctx = {}) => {
       || authUser.value?.email
       || '',
     ).trim().toLowerCase()
-    const employerId = String(authUser.value?.id || '').trim()
+    const employerId = String(authUser.value?.id || authUser.value?.uid || workspaceOwnerId || '').trim()
 
     if (!workspaceOwnerId || !employerId) {
       showPaymentToast('Refresh the page and sign in again before saving this job post.', 'error')
