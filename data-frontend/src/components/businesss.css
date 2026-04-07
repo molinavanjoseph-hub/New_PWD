@@ -228,7 +228,7 @@
 }
 
 .business-sidebar__brand-copy small {
-  color: #759081;
+  color: #51675c;
   font-size: 0.64rem;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -237,7 +237,7 @@
 
 .business-sidebar__section-label {
   padding: 0 0.38rem;
-  color: #7b8d84;
+  color: #556a60;
   font-size: 0.64rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -245,7 +245,7 @@
 }
 
 .business-sidebar__section-label--headline {
-  color: #678073;
+  color: #476155;
 }
 
 .business-sidebar__nav,
@@ -280,7 +280,7 @@
   border: 0;
   border-radius: 14px;
   background: transparent;
-  color: #5a6d63;
+  color: #334c3f;
   text-align: left;
   font: inherit;
   font-size: 0.75rem;
@@ -323,7 +323,7 @@
 }
 
 .business-sidebar__chevron {
-  color: #90a198;
+  color: #5b7266;
   transition: transform 0.18s ease, color 0.18s ease;
 }
 
@@ -386,7 +386,7 @@
   border-bottom: 0;
   border-radius: 14px;
   background: transparent;
-  color: #6a7c72;
+  color: #3a5245;
   text-align: left;
   font: inherit;
   font-size: 0.74rem;
@@ -512,7 +512,7 @@
 }
 
 .business-sidebar__profile-email {
-  color: #759081;
+  color: #556d62;
   font-size: 0.62rem;
   line-height: 1.15;
   white-space: nowrap;
@@ -555,14 +555,14 @@
 
 .business-user-sidebar__workspace-card p {
   margin: 0;
-  color: #5f7a6b;
+  color: #486154;
   font-size: 0.7rem;
   line-height: 1.4;
 }
 
 .business-user-sidebar__secondary-copy {
   margin: 0 0 0.42rem;
-  color: #6a8375;
+  color: #4c6558;
   font-size: 0.7rem;
   line-height: 1.45;
 }
@@ -5700,37 +5700,44 @@
 }
 
 .business-applicants-modal {
-  width: min(44rem, calc(100vw - 2rem));
+  width: min(52rem, calc(100vw - 2rem));
+  gap: 1.15rem;
 }
 
 .business-applicants-modal__body {
   display: grid;
-  gap: 1rem;
+  gap: 1.08rem;
 }
 
 .business-applicants-modal__identity {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.9rem;
+  gap: 1rem;
   align-items: center;
-  padding: 1rem;
-  border: 1px solid rgba(213, 226, 219, 0.92);
-  border-radius: 1rem;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 251, 249, 0.96) 100%);
+  padding: 1.08rem 1.12rem;
+  border: 1px solid rgba(192, 214, 201, 0.86);
+  border-radius: 1.3rem;
+  background:
+    radial-gradient(circle at top left, rgba(222, 245, 231, 0.88), transparent 42%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.99) 0%, rgba(244, 250, 246, 0.97) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 16px 34px rgba(24, 68, 44, 0.07);
 }
 
 .business-applicants-modal__avatar {
-  width: 3.6rem;
-  height: 3.6rem;
+  width: 4rem;
+  height: 4rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
+  border-radius: 1.2rem;
   background: linear-gradient(135deg, #1d6a45 0%, #7bb18e 100%);
   color: #ffffff;
-  font-size: 1rem;
+  font-size: 1.02rem;
   font-weight: 800;
   overflow: hidden;
+  box-shadow: 0 14px 28px rgba(29, 106, 69, 0.22);
 }
 
 .business-applicants-modal__avatar img {
@@ -5741,23 +5748,24 @@
 
 .business-applicants-modal__identity-copy {
   display: grid;
-  gap: 0.3rem;
+  gap: 0.38rem;
 }
 
 .business-applicants-modal__identity-copy strong {
   color: #172033;
-  font-size: 1rem;
+  font-size: 1.08rem;
+  line-height: 1.16;
 }
 
 .business-applicants-modal__identity-copy span {
-  color: #5f7568;
+  color: #4f675a;
   font-size: 0.84rem;
 }
 
 .business-applicants-modal__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.84rem;
 }
 
 .business-applicants-modal__resume {
@@ -5829,12 +5837,29 @@
 }
 
 .business-applicants-modal__item {
+  position: relative;
   display: grid;
-  gap: 0.32rem;
-  padding: 0.9rem 0.95rem;
-  border: 1px solid rgba(221, 231, 225, 0.92);
-  border-radius: 0.9rem;
-  background: rgba(249, 252, 250, 0.98);
+  gap: 0.38rem;
+  min-height: 5.35rem;
+  align-content: start;
+  padding: 1rem 1rem 0.98rem 1.12rem;
+  border: 1px solid rgba(214, 226, 220, 0.94);
+  border-radius: 1.08rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 252, 249, 0.98) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 12px 24px rgba(20, 52, 35, 0.05);
+}
+
+.business-applicants-modal__item::before {
+  content: '';
+  position: absolute;
+  left: 0.02rem;
+  top: 0.92rem;
+  bottom: 0.92rem;
+  width: 0.2rem;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #8dc3a3 0%, #2f7a4f 100%);
 }
 
 .business-applicants-modal__item--wide {
@@ -5843,52 +5868,73 @@
 
 .business-applicants-modal__item span,
 .business-applicants-modal__reason span {
-  color: #5f7568;
-  font-size: 0.74rem;
+  color: #597164;
+  font-size: 0.7rem;
   font-weight: 800;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.11em;
   text-transform: uppercase;
 }
 
 .business-applicants-modal__item strong {
-  color: #172033;
-  font-size: 0.9rem;
-  line-height: 1.55;
+  color: #173324;
+  font-size: 0.95rem;
+  line-height: 1.52;
 }
 
 .business-applicants-modal__reason {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.55rem;
+  padding: 1rem 1.05rem;
+  border: 1px solid rgba(205, 219, 211, 0.92);
+  border-radius: 1.12rem;
+  background: linear-gradient(180deg, rgba(248, 252, 249, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.86);
 }
 
 .business-applicants-modal__reason textarea {
   width: 100%;
   min-height: 7rem;
   padding: 0.9rem 1rem;
-  border: 1px solid rgba(216, 227, 220, 0.96);
-  border-radius: 0.9rem;
-  background: #ffffff;
+  border: 1px solid rgba(205, 218, 211, 0.96);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.96);
   color: #183126;
   font: inherit;
   resize: vertical;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.business-applicants-modal__reason textarea:focus {
+  outline: none;
+  border-color: #79b293;
+  box-shadow: 0 0 0 4px rgba(46, 154, 98, 0.12);
+  background: #ffffff;
 }
 
 .business-applicants-modal__error {
   margin: 0;
+  padding: 0.82rem 0.92rem;
+  border: 1px solid #fecaca;
+  border-radius: 1rem;
+  background: linear-gradient(180deg, #fff7f7 0%, #fff0f0 100%);
   color: #b42318;
   font-size: 0.82rem;
   font-weight: 700;
+  line-height: 1.55;
 }
 
 .business-applicants-modal__button--reject {
-  border-color: rgba(254, 205, 211, 0.95);
-  background: #fff1f2;
+  border-color: rgba(251, 191, 199, 0.96);
+  background: linear-gradient(180deg, #fff5f6 0%, #ffecef 100%);
   color: #be123c;
+  box-shadow: 0 12px 24px rgba(190, 18, 60, 0.08);
 }
 
 .business-applicants-modal__button--reject-primary {
-  background: linear-gradient(180deg, #be123c 0%, #9f1239 100%);
-  border-color: #be123c;
+  background: linear-gradient(180deg, #be123c 0%, #8f1234 100%);
+  border-color: #a3123a;
+  box-shadow: 0 16px 28px rgba(159, 18, 57, 0.18);
 }
 
 @media (max-width: 720px) {
@@ -6766,44 +6812,54 @@
 }
 
 .business-interview-review-modal {
-  width: min(46rem, calc(100vw - 2rem));
+  width: min(54rem, calc(100vw - 2rem));
 }
 
 .business-interview-review-modal__options {
-  padding: 0.95rem 1rem;
-  border: 1px solid rgba(216, 227, 220, 0.96);
-  border-radius: 0.9rem;
-  background: linear-gradient(180deg, #ffffff 0%, #f6fbf8 100%);
+  display: grid;
+  gap: 0.62rem;
+  padding: 1.04rem 1.08rem;
+  border: 1px solid rgba(205, 219, 211, 0.92);
+  border-radius: 1.12rem;
+  background:
+    radial-gradient(circle at top left, rgba(229, 246, 236, 0.74), transparent 40%),
+    linear-gradient(180deg, rgba(248, 252, 249, 0.98) 0%, rgba(255, 255, 255, 0.98) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88),
+    0 12px 26px rgba(20, 52, 35, 0.05);
 }
 
 .business-interview-review-modal__options small {
-  color: #607167;
-  font-size: 0.8rem;
+  color: #5d7568;
+  font-size: 0.82rem;
   line-height: 1.55;
 }
 
 .business-interview-review-modal__option-grid {
   display: grid;
-  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.78rem;
 }
 
 .business-interview-review-modal__option-actions {
   display: flex;
   justify-content: flex-start;
-  margin-top: 0.85rem;
+  margin-top: 0.12rem;
 }
 
 .business-interview-review-modal__option-add {
-  min-height: 2.5rem;
-  padding: 0.65rem 1rem;
-  border: 1px dashed rgba(58, 117, 83, 0.42);
-  border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.94);
-  color: #2d6b49;
+  min-height: 2.45rem;
+  padding: 0.62rem 0.92rem;
+  border: 1px solid rgba(183, 210, 195, 0.96);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f5faf7 100%);
+  color: #2a6144;
   font: inherit;
+  font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;
-  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  box-shadow: 0 12px 24px rgba(32, 82, 55, 0.08);
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .business-interview-review-modal__option-add:hover:not(:disabled) {
@@ -6819,18 +6875,30 @@
 
 .business-interview-review-modal__option-field {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.42rem;
+  padding: 0.88rem 0.92rem;
+  border: 1px solid rgba(211, 223, 216, 0.94);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .business-interview-review-modal__option-field input {
   width: 100%;
   min-height: 2.9rem;
   padding: 0.7rem 0.9rem;
-  border: 1px solid rgba(216, 227, 220, 0.96);
-  border-radius: 0.85rem;
+  border: 1px solid rgba(205, 218, 211, 0.96);
+  border-radius: 0.9rem;
   background: #ffffff;
   color: #183126;
   font: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+
+.business-interview-review-modal__option-field input:focus {
+  outline: none;
+  border-color: #79b293;
+  box-shadow: 0 0 0 4px rgba(46, 154, 98, 0.12);
 }
 
 .business-assessment-management {
@@ -10205,7 +10273,9 @@
   display: grid;
   place-items: center;
   padding: 1.25rem;
-  background: rgba(244, 248, 244, 0.18);
+  background:
+    radial-gradient(circle at top, rgba(106, 179, 137, 0.18), transparent 34%),
+    linear-gradient(180deg, rgba(244, 248, 244, 0.42) 0%, rgba(232, 241, 236, 0.64) 100%);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   will-change: opacity;
@@ -10219,15 +10289,21 @@
 
 .business-modal__card {
   width: min(100%, 28rem);
+  position: relative;
   display: grid;
-  gap: 0.9rem;
-  padding: 1.25rem;
-  border: 1px solid #d7dfd9;
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.16);
+  gap: 1rem;
+  padding: 1.35rem;
+  border: 1px solid rgba(210, 221, 214, 0.96);
+  border-radius: 1.45rem;
+  background:
+    radial-gradient(circle at top left, rgba(230, 247, 237, 0.84), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99) 0%, rgba(246, 250, 247, 0.98) 100%);
+  box-shadow:
+    0 28px 60px rgba(17, 48, 31, 0.14),
+    0 10px 24px rgba(15, 23, 42, 0.08);
   transform-origin: center;
   will-change: transform, opacity;
+  overflow: hidden;
 }
 
 .business-modal__card--drawer {
@@ -10295,22 +10371,30 @@
   min-width: 11.5rem;
 }
 
+.business-modal__copy {
+  display: grid;
+  gap: 0.12rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(223, 231, 226, 0.9);
+}
+
 .business-modal__copy h2 {
   margin: 0;
   color: #163726;
-  font-size: 1.2rem;
+  font-size: 1.28rem;
   font-weight: 800;
+  line-height: 1.12;
 }
 
 .business-modal__copy p {
   margin: 0.35rem 0 0;
-  color: #607268;
+  color: #5a6e64;
   font-size: 0.9rem;
   line-height: 1.5;
 }
 
 .business-modal__note {
-  color: #73837b;
+  color: #66786f;
   font-size: 0.8rem;
 }
 
@@ -10409,14 +10493,17 @@
 
 .business-modal__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 0.6rem;
+  gap: 0.68rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(223, 231, 226, 0.9);
 }
 
 .business-modal__button {
-  min-height: 40px;
-  padding: 0.65rem 1rem;
-  border-radius: 10px;
+  min-height: 44px;
+  padding: 0.7rem 1.02rem;
+  border-radius: 0.95rem;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
@@ -10429,20 +10516,56 @@
 }
 
 .business-modal__button--secondary {
-  border: 1px solid #d6ddd8;
-  background: #ffffff;
-  color: #5f7168;
+  border: 1px solid #d5e0d9;
+  background: linear-gradient(180deg, #ffffff 0%, #f6faf8 100%);
+  color: #315345;
+  box-shadow: 0 12px 24px rgba(28, 63, 43, 0.08);
 }
 
 .business-modal__button--primary {
   border: 1px solid #2e7d53;
-  background: #2f8f5b;
+  background: linear-gradient(180deg, #2f8f5b 0%, #266f49 100%);
   color: #ffffff;
+  box-shadow: 0 16px 30px rgba(47, 143, 91, 0.22);
+}
+
+.business-modal__button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.business-modal__button:disabled {
+  opacity: 0.68;
+  cursor: not-allowed;
   box-shadow: none;
 }
 
-.business-modal__button:hover {
-  transform: translateY(-1px);
+@media (max-width: 720px) {
+  .business-interview-review-modal__option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .business-modal {
+    padding: 0.75rem;
+  }
+
+  .business-modal__card {
+    width: min(100%, calc(100vw - 0.5rem));
+    padding: 1rem;
+    border-radius: 1.15rem;
+  }
+
+  .business-modal__copy {
+    padding-bottom: 0.85rem;
+  }
+
+  .business-modal__actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .business-modal__button {
+    width: 100%;
+  }
 }
 
 .business-trial-modal-enter-active,

@@ -79,7 +79,7 @@
 }
 
 .applicant-sidebar__brand-copy strong {
-  color: #6a8274;
+  color: #4f6659;
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.14em;
@@ -95,7 +95,7 @@
 }
 
 .applicant-sidebar__mobile-topbar span {
-  color: #718678;
+  color: #566c60;
   font-size: 0.72rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -131,7 +131,7 @@
 }
 
 .applicant-sidebar__nav-head span {
-  color: #718678;
+  color: #566c60;
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -139,7 +139,7 @@
 }
 
 .applicant-sidebar__nav-head small {
-  color: #84988b;
+  color: #647c6f;
   font-size: 0.72rem;
   font-weight: 700;
 }
@@ -170,7 +170,7 @@
   border-bottom: 1px solid rgba(194, 214, 201, 0.72);
   border-left: 3px solid transparent;
   background: transparent;
-  color: #40554a;
+  color: #2f463a;
   text-align: left;
   cursor: pointer;
   transition:
@@ -220,7 +220,7 @@
 }
 
 .applicant-sidebar__link-meta {
-  color: #728578;
+  color: #577063;
   display: -webkit-box;
   overflow: hidden;
   font-size: 0.74rem;
@@ -253,7 +253,7 @@
 }
 
 .applicant-sidebar__link.is-active .applicant-sidebar__link-meta {
-  color: #4f6e5e;
+  color: #3f5e4e;
 }
 
 .applicant-sidebar__link:hover .applicant-sidebar__link-glow,
@@ -319,7 +319,7 @@
 }
 
 .applicant-sidebar__profile-copy span {
-  color: #6f8578;
+  color: #587063;
   font-size: 0.74rem;
   font-weight: 600;
   line-height: 1.35;

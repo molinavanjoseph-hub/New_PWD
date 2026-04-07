@@ -174,6 +174,21 @@ function normalizeDisabilityCategory(value) {
   return text
 }
 
+function getDisabilityIconClass(disabilityFit) {
+  const text = String(disabilityFit || '').toLowerCase()
+  if (text.includes('hearing')) return 'bi bi-ear'
+  if (text.includes('speech')) return 'bi bi-chat-square-text'
+  if (text.includes('visual') || text.includes('vision')) return 'bi bi-eye'
+  if (text.includes('physical') || text.includes('mobility') || text.includes('wheelchair')) {
+    return 'bi bi-person-wheelchair'
+  }
+  if (text.includes('learning')) return 'bi bi-book'
+  if (text.includes('intellectual')) return 'bi bi-lightbulb'
+  if (text.includes('autism')) return 'bi bi-stars'
+  if (text.includes('psychosocial') || text.includes('chronic')) return 'bi bi-heart-pulse'
+  return 'bi bi-universal-access-circle'
+}
+
 function getCompanyInitials(name) {
   const words = String(name || '').trim().split(/\s+/).filter(Boolean).slice(0, 2)
   if (!words.length) return 'CO'
@@ -708,39 +723,76 @@ onBeforeUnmount(() => {
         <article class="detail-modal detail-modal--drawer" @click.stop>
           <div class="detail-head">
             <div class="detail-head-card">
-              <button type="button" class="detail-close-btn" @click="closeJobDetails">
+              <button type="button" class="detail-close-btn" aria-label="Close job details" @click="closeJobDetails">
                 <i class="bi bi-x-lg" />
               </button>
-              <div class="detail-head-main">
-                <div class="detail-logo">
-                  <img v-if="selectedJob.logoUrl" :src="selectedJob.logoUrl" alt="" class="search-job-logo-image" />
-                  <template v-else>{{ getCompanyInitials(selectedJob.companyName) }}</template>
+
+              <div class="flex gap-3 pr-12">
+                <div
+                  class="flex h-16 w-16 items-center justify-center overflow-hidden rounded-[1rem] border border-[#d6e2da] bg-white p-1.5 text-[1.2rem] font-bold text-[#1b8a54]"
+                >
+                  <img
+                    v-if="selectedJob.logoUrl"
+                    :src="selectedJob.logoUrl"
+                    :alt="`${selectedJob.companyName} logo`"
+                    class="h-full w-full object-contain"
+                  />
+                  <span v-else>{{ getCompanyInitials(selectedJob.companyName) }}</span>
                 </div>
-                <div class="detail-head-copy">
-                  <div class="detail-head-badges">
-                    <span class="result-status-inline"><i class="bi bi-dot" /> Open</span>
-                    <span class="result-posted-inline"><i class="bi bi-clock-history" /> {{ String(selectedJob.postedDate).replace('Posted: ', '') }}</span>
-                  </div>
-                  <h2>{{ selectedJob.title }}</h2>
-                  <p class="result-company-line"><i class="bi bi-building" /> <span>{{ selectedJob.companyName }}</span></p>
-                  <p class="detail-meta-inline">
-                    <span class="result-meta-chip"><i class="bi bi-geo-alt" /> {{ selectedJob.location }}</span>
-                    <span class="result-meta-chip"><i class="bi bi-briefcase" /> {{ selectedJob.category }}</span>
-                    <span class="result-meta-chip"><i class="bi bi-clock" /> {{ selectedJob.type }}</span>
-                    <span class="result-meta-chip"><i class="bi bi-people" /> {{ selectedJob.vacancies }} Vacancies</span>
+
+                <div class="min-w-0 flex-1">
+                  <h2 class="text-[1.45rem] font-bold leading-tight text-[#1b2a22]">
+                    {{ selectedJob.title }}
+                  </h2>
+                  <p class="mt-1 flex items-center gap-2 text-[0.95rem] text-[#5f6b65]">
+                    <i class="bi bi-buildings text-[#6d7a84]" />
+                    <span>{{ selectedJob.companyName }}</span>
                   </p>
+                  <div class="mt-2 space-y-1.5 text-[0.88rem] text-[#415149]">
+                    <div class="flex items-center gap-2">
+                      <i class="bi bi-geo-alt text-[#1b8a54]" />
+                      <span>{{ selectedJob.location }}</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <i class="bi bi-briefcase text-[#1b8a54]" />
+                      <span>{{ selectedJob.category }}</span>
+                      <i class="bi bi-clock text-[#e29a33]" />
+                      <span>{{ selectedJob.setup || selectedJob.type }}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <i class="bi bi-people text-[#7b59d1]" />
+                      <span>{{ selectedJob.vacancies }} Vacancies</span>
+                    </div>
+                    <div class="flex items-center gap-2 text-[#5f6b65]">
+                      <i class="bi bi-clock-history text-[#7b59d1]" />
+                      <span>{{ String(selectedJob.postedDate).replace('Posted: ', '') }}</span>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <button type="button" class="detail-view-map-btn">
-                <i class="bi bi-map" /> View Map
-              </button>
             </div>
           </div>
+
           <div class="detail-body">
             <section class="detail-panel">
-              <h3><i class="bi bi-file-text" /> Job Description</h3>
+              <h3><i class="bi bi-file-earmark-text text-[#1b8a54]" /> Job Description</h3>
               <p>{{ selectedJob.description }}</p>
             </section>
+
+            <section class="detail-panel">
+              <h3><i class="bi bi-person-vcard text-[#1b8a54]" /> Language and Age Preference</h3>
+              <div class="mt-3 space-y-2 text-[0.92rem] text-[#5f6b65]">
+                <p>
+                  <strong class="text-[#24332b]">Languages:</strong>
+                  {{ selectedJob.languages.length ? selectedJob.languages.join(', ') : 'Not specified' }}
+                </p>
+                <p>
+                  <strong class="text-[#24332b]">Preferred Age:</strong>
+                  {{ selectedJob.preferredAgeRange || 'Not specified' }}
+                </p>
+              </div>
+            </section>
+
             <div class="detail-stat-grid">
               <section class="detail-stat-card detail-stat-card--accent">
                 <p class="detail-stat-card__label">Salary Range</p>
@@ -749,25 +801,40 @@ onBeforeUnmount(() => {
               <section class="detail-stat-card">
                 <p class="detail-stat-card__label">Suitable For</p>
                 <p class="detail-stat-card__fit">
-                  <i class="bi bi-universal-access-circle" />
+                  <i :class="getDisabilityIconClass(selectedJob.disabilityFit)" />
                   <span>{{ selectedJob.disabilityFit }}</span>
                 </p>
               </section>
             </div>
-            <div class="detail-panels">
+
+            <div class="detail-panels detail-panels--stacked-mobile">
               <section class="detail-panel">
-                <h3><i class="bi bi-check2-circle" /> Qualifications</h3>
+                <h3><i class="bi bi-patch-check text-[#1b8a54]" /> Qualifications</h3>
                 <ul class="detail-list">
-                  <li v-for="item in (selectedJob.qualifications.length ? selectedJob.qualifications : ['No qualifications provided.'])" :key="item"><i class="bi bi-dot" /> <span>{{ item }}</span></li>
+                  <li
+                    v-for="item in (selectedJob.qualifications.length ? selectedJob.qualifications : ['No qualifications provided.'])"
+                    :key="`qualification-${item}`"
+                  >
+                    <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#1b8a54]"></span>
+                    <span>{{ item }}</span>
+                  </li>
                 </ul>
               </section>
+
               <section class="detail-panel">
-                <h3><i class="bi bi-list-task" /> Responsibilities</h3>
+                <h3><i class="bi bi-list-check text-[#1b8a54]" /> Responsibilities</h3>
                 <ul class="detail-list">
-                  <li v-for="item in (selectedJob.responsibilities.length ? selectedJob.responsibilities : ['No responsibilities provided.'])" :key="item"><i class="bi bi-dot" /> <span>{{ item }}</span></li>
+                  <li
+                    v-for="item in (selectedJob.responsibilities.length ? selectedJob.responsibilities : ['No responsibilities provided.'])"
+                    :key="`responsibility-${item}`"
+                  >
+                    <span class="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#1b8a54]"></span>
+                    <span>{{ item }}</span>
+                  </li>
                 </ul>
               </section>
             </div>
+
             <div class="detail-actions">
               <button type="button" class="action-btn detail-secondary-btn" @click="saveJob(selectedJob)">
                 <i class="bi bi-bookmark" />
@@ -1340,7 +1407,7 @@ onBeforeUnmount(() => {
 
 .detail-head-card {
   padding: 1.1rem;
-  border-radius: 0;
+  border-radius: 1.1rem;
 }
 
 .detail-body {
@@ -1352,7 +1419,7 @@ onBeforeUnmount(() => {
 }
 
 .detail-panel {
-  border-radius: 0;
+  border-radius: 1.1rem;
   border-color: #dce6e0;
   background: #ffffff;
 }
@@ -1365,11 +1432,8 @@ onBeforeUnmount(() => {
 
 .detail-list li {
   gap: 0.6rem;
+  align-items: flex-start;
   color: #5f6b65;
-}
-
-.detail-list li .bi {
-  color: #1b8a54;
 }
 
 .detail-stat-grid {
@@ -1380,7 +1444,7 @@ onBeforeUnmount(() => {
 
 .detail-stat-card {
   border: 1px solid #d8e7dd;
-  border-radius: 0;
+  border-radius: 1.1rem;
   background: #f9fbfa;
   padding: 1rem;
 }
@@ -1429,6 +1493,10 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
   background: linear-gradient(180deg, rgba(239, 244, 239, 0) 0%, rgba(239, 244, 239, 0.96) 28%, #eff4ef 100%);
+}
+
+.detail-panels--stacked-mobile {
+  align-items: start;
 }
 
 .action-btn {
@@ -1548,6 +1616,10 @@ onBeforeUnmount(() => {
 
   .detail-head-card {
     padding: 0.95rem;
+  }
+
+  .detail-head-card h2 {
+    font-size: 1.28rem;
   }
 }
 </style>
