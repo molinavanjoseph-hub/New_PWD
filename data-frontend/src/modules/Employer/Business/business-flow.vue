@@ -337,6 +337,8 @@ const paymentContactCountryCode = ref('PH')
 const isPaymentContactCountryDropdownOpen = ref(false)
 const paymentContactCountryDropdownRef = ref(null)
 const isNotificationMenuOpen = ref(false)
+const isBusinessNotificationDetailOpen = ref(false)
+const selectedBusinessNotification = ref(null)
 const businessNotifications = ref([])
 const BUSINESS_SEEN_NOTIFICATION_STORAGE_KEY = 'businessSeenNotificationIds'
 const BUSINESS_DELIVERED_NOTIFICATION_TOAST_STORAGE_KEY = 'businessDeliveredNotificationToastIds'
@@ -613,6 +615,95 @@ const notifyBusinessActivity = (notification = {}) => {
   previewBusinessNotification(notification)
 }
 
+const resolveBusinessNotificationSectionLabel = (value = '') => {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  if (normalizedValue === 'applicant-management') return 'Applicant Management'
+  if (normalizedValue === 'issue-offer') return 'Issue Offer'
+  if (normalizedValue === 'contract-signing') return 'Contract Signing'
+  if (normalizedValue === 'job-posting') return 'Job Posting'
+  if (normalizedValue === 'interview-scheduling') return 'Interview Scheduling'
+  if (normalizedValue === 'assessment-management') return 'Assessment Management'
+  if (normalizedValue === 'training-templates') return 'Training Templates'
+  if (normalizedValue === 'subscriptions') return 'Subscriptions'
+  if (normalizedValue === 'profile') return 'Business Profile'
+  if (normalizedValue === 'dashboard') return 'Dashboard'
+  if (normalizedValue === 'user-overview') return 'User Overview'
+  if (normalizedValue === 'permissions') return 'Permissions'
+  return 'Workspace'
+}
+
+const openBusinessNotificationDetail = (notification = {}) => {
+  const normalizedNotification = notification && typeof notification === 'object' ? notification : {}
+  selectedBusinessNotification.value = {
+    ...normalizedNotification,
+    title: String(normalizedNotification?.title || 'Notification').trim() || 'Notification',
+    message: String(
+      normalizedNotification?.message
+      || normalizedNotification?.copy
+      || normalizedNotification?.title
+      || 'There is a new workspace update.',
+    ).trim(),
+    section: String(normalizedNotification?.section || '').trim(),
+    sectionLabel: resolveBusinessNotificationSectionLabel(normalizedNotification?.section),
+    timeLabel: String(normalizedNotification?.createdAtLabel || '').trim()
+      || formatBusinessNotificationTime(new Date(normalizedNotification?.createdAt || Date.now())),
+  }
+  isBusinessNotificationDetailOpen.value = true
+}
+
+const closeBusinessNotificationDetail = () => {
+  isBusinessNotificationDetailOpen.value = false
+  selectedBusinessNotification.value = null
+}
+
+const businessNotificationPrimaryActionLabel = computed(() => {
+  const notification = selectedBusinessNotification.value || {}
+  const targetSection = String(notification?.section || '').trim()
+  if (String(notification?.applicationId || '').trim()) return 'Open applicant'
+  if (targetSection === 'subscriptions') return 'Open subscriptions'
+  if (targetSection === 'profile') return 'Open profile'
+  if (targetSection) return `Open ${String(notification?.sectionLabel || 'section').trim()}`
+  return 'Open workspace'
+})
+
+const openBusinessNotificationTarget = () => {
+  const matchedNotification = selectedBusinessNotification.value || {}
+  const targetSection = String(matchedNotification?.section || '').trim()
+  const targetApplicationId = String(matchedNotification?.applicationId || '').trim()
+
+  closeBusinessNotificationDetail()
+
+  if (targetApplicationId) {
+    activeSection.value = 'applicant-management'
+    void nextTick(() => {
+      openApplicantManagementDecision(targetApplicationId, 'view')
+    })
+    return
+  }
+
+  if (targetSection === 'subscriptions') {
+    openBusinessSubscriptionSection()
+    return
+  }
+
+  if (targetSection === 'profile') {
+    activeSection.value = 'profile'
+    return
+  }
+
+  if (targetSection && availableSidebarSectionIds.value.includes(targetSection)) {
+    activeSection.value = targetSection
+    return
+  }
+
+  if (availableSidebarSectionIds.value.includes('dashboard')) {
+    activeSection.value = 'dashboard'
+    return
+  }
+
+  activeSection.value = resolveFirstAvailableBusinessSection()
+}
+
 const openBusinessNotification = (notificationId) => {
   const targetId = String(notificationId || '').trim()
   markBusinessNotificationsAsRead(
@@ -625,25 +716,7 @@ const openBusinessNotification = (notificationId) => {
     return
   }
 
-  const targetSection = String(matchedNotification?.section || '').trim()
-  const targetApplicationId = String(matchedNotification?.applicationId || '').trim()
-
-  previewBusinessNotification(matchedNotification)
-
-  if (targetApplicationId) {
-    activeSection.value = 'applicant-management'
-    void nextTick(() => {
-      openApplicantManagementDecision(targetApplicationId, 'view')
-    })
-  } else if (targetSection === 'subscriptions') {
-    openBusinessSubscriptionSection()
-  } else if (targetSection === 'profile') {
-    openPersonalization()
-  } else if (targetSection && availableSidebarSectionIds.value.includes(targetSection)) {
-    activeSection.value = targetSection
-  } else if (availableSidebarSectionIds.value.includes('dashboard')) {
-    activeSection.value = 'dashboard'
-  }
+  openBusinessNotificationDetail(matchedNotification)
   isNotificationMenuOpen.value = false
 }
 
@@ -11927,6 +12000,34 @@ onBeforeUnmount(() => {
         </Transition>
       </main>
     </section>
+
+    <Transition name="business-trial-modal">
+      <div v-if="isBusinessNotificationDetailOpen && selectedBusinessNotification" class="business-modal" @click.self="closeBusinessNotificationDetail">
+        <div class="business-modal__card" role="dialog" aria-modal="true" aria-labelledby="business-notification-title">
+          <div class="business-modal__copy">
+            <h2 id="business-notification-title">{{ selectedBusinessNotification.title }}</h2>
+            <p>{{ selectedBusinessNotification.message }}</p>
+            <p class="business-modal__note">{{ selectedBusinessNotification.sectionLabel }} | {{ selectedBusinessNotification.timeLabel }}</p>
+          </div>
+          <div class="business-modal__actions">
+            <button
+              type="button"
+              class="business-modal__button business-modal__button--secondary"
+              @click="closeBusinessNotificationDetail"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              class="business-modal__button business-modal__button--primary"
+              @click="openBusinessNotificationTarget"
+            >
+              {{ businessNotificationPrimaryActionLabel }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
     <BModals v-bind="modalBindings" />
     <BIssueOfferModal

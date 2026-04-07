@@ -62,6 +62,8 @@ const APPLICANT_WELCOME_TOAST_KEY = 'applicantWelcomeToastName'
 const LOGOUT_TOAST_KEY = 'showLoggedOutToast'
 const welcomeToastName = ref('')
 const toast = ref(null)
+const isApplicantNotificationDetailOpen = ref(false)
+const selectedApplicantNotification = ref(null)
 const hasApplicantNotificationFeedHydrated = ref(false)
 const applicantDeliveredNotificationToastIds = ref([])
 const jobsLoading = ref(true)
@@ -691,11 +693,65 @@ const selectSection = (sectionId) => {
 }
 
 const handleApplicantNotificationOpen = (notification = {}) => {
-  const targetSection = String(notification?.section || '').trim()
   closeApplicantMobileSidebar()
+  const normalizedNotification = notification && typeof notification === 'object' ? notification : {}
+  const createdAtValue = Number(normalizedNotification?.createdAtValue)
+    || Date.parse(String(normalizedNotification?.createdAt || normalizedNotification?.created_at || '').trim())
+    || Date.now()
+  const resolveApplicantNotificationSectionLabel = (value = '') => {
+    const normalizedValue = String(value || '').trim().toLowerCase()
+    if (normalizedValue === 'applications') return 'Applications'
+    if (normalizedValue === 'interviews') return 'Interviews'
+    if (normalizedValue === 'job-offers') return 'Job Offers'
+    if (normalizedValue === 'contracts') return 'Contracts'
+    if (normalizedValue === 'technical-assessment') return 'Technical Assessment'
+    if (normalizedValue === 'find-jobs') return 'Find Jobs'
+    if (normalizedValue === 'messages') return 'Inbox'
+    if (normalizedValue === 'profile') return 'My Profile'
+    if (normalizedValue === 'settings') return 'Settings'
+    return 'Workspace'
+  }
+
+  selectedApplicantNotification.value = {
+    ...normalizedNotification,
+    title: String(normalizedNotification?.title || 'Notification').trim() || 'Notification',
+    message: String(
+      normalizedNotification?.message
+      || normalizedNotification?.copy
+      || normalizedNotification?.title
+      || 'There is a new update in your applicant workspace.',
+    ).trim(),
+    section: String(normalizedNotification?.section || '').trim(),
+    sectionLabel: resolveApplicantNotificationSectionLabel(normalizedNotification?.section),
+    timeLabel: String(normalizedNotification?.timeLabel || '').trim() || formatApplicantNotificationTime(createdAtValue),
+  }
+  isApplicantNotificationDetailOpen.value = true
+}
+
+const closeApplicantNotificationDetail = () => {
+  isApplicantNotificationDetailOpen.value = false
+  selectedApplicantNotification.value = null
+}
+
+const applicantNotificationPrimaryActionLabel = computed(() => {
+  const targetSection = String(selectedApplicantNotification.value?.section || '').trim()
+  if (targetSection === 'settings') return 'Open settings'
+  if (targetSection === 'profile') return 'Open profile'
+  if (targetSection === 'find-jobs') return 'Open jobs'
+  if (targetSection === 'messages') return 'Open inbox'
+  if (targetSection) return `Open ${String(selectedApplicantNotification.value?.sectionLabel || 'section').trim()}`
+  return 'Open workspace'
+})
+
+const openApplicantNotificationTarget = () => {
+  const notification = selectedApplicantNotification.value || {}
+  const targetSection = String(notification?.section || '').trim()
+
+  closeApplicantNotificationDetail()
+  closeApplicantMobileSidebar()
+
   if (targetSection === 'settings') {
     openApplicantSettings()
-    previewApplicantNotification(notification)
     return
   }
 
@@ -705,21 +761,18 @@ const handleApplicantNotificationOpen = (notification = {}) => {
     } else {
       activeSection.value = resolveFirstAvailableApplicantSection()
     }
-    previewApplicantNotification(notification)
     return
   }
 
-  if (['applications', 'interviews', 'job-offers', 'contracts', 'technical-assessment', 'find-jobs', 'messages', 'profile', 'settings'].includes(targetSection)
+  if (['applications', 'interviews', 'job-offers', 'contracts', 'technical-assessment', 'find-jobs', 'messages'].includes(targetSection)
     && canViewApplicantModule(targetSection)) {
     isApplicantSettingsModalOpen.value = false
     if (activeSection.value !== targetSection) {
       activeSection.value = targetSection
     }
-    previewApplicantNotification(notification)
     return
   }
 
-  previewApplicantNotification(notification)
   activeSection.value = resolveFirstAvailableApplicantSection()
 }
 
@@ -4534,6 +4587,61 @@ onBeforeUnmount(() => {
       @open-terms="openTermsAndPolicies"
       @logout="requestLogout"
     />
+
+    <transition name="applicant-apply-confirm">
+      <div
+        v-if="isApplicantNotificationDetailOpen && selectedApplicantNotification"
+        class="applicant-apply-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="applicant-notification-title"
+      >
+        <div class="applicant-apply-confirm__card">
+          <button
+            type="button"
+            class="applicant-apply-confirm__close"
+            aria-label="Close notification details"
+            @click="closeApplicantNotificationDetail"
+          >
+            <i class="bi bi-x-lg" />
+          </button>
+          <span class="applicant-apply-confirm__eyebrow">Applicant notification</span>
+          <div class="applicant-apply-confirm__icon" aria-hidden="true">
+            <i class="bi bi-bell" />
+          </div>
+          <h2 id="applicant-notification-title">{{ selectedApplicantNotification.title }}</h2>
+          <p>{{ selectedApplicantNotification.message }}</p>
+
+          <div class="applicant-apply-confirm__meta">
+            <span>
+              <i class="bi bi-grid-1x2" aria-hidden="true" />
+              {{ selectedApplicantNotification.sectionLabel }}
+            </span>
+            <span>
+              <i class="bi bi-clock" aria-hidden="true" />
+              {{ selectedApplicantNotification.timeLabel }}
+            </span>
+          </div>
+
+          <div class="applicant-apply-confirm__actions">
+            <button
+              type="button"
+              class="applicant-apply-confirm__button applicant-apply-confirm__button--ghost"
+              @click="closeApplicantNotificationDetail"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              class="applicant-apply-confirm__button applicant-apply-confirm__button--primary"
+              @click="openApplicantNotificationTarget"
+            >
+              {{ applicantNotificationPrimaryActionLabel }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
 
     <transition name="applicant-welcome-toast">
       <div v-if="welcomeToastName" class="applicant-welcome-toast" role="status" aria-live="polite">
