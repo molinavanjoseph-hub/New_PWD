@@ -22,8 +22,7 @@ const VIEWER_SWITCH_DELAY_MS = 1000
 let viewerSwitchToken = 0
 let viewerSwitchTimeoutId = null
 
-const formatInterviewType = (value) =>
-  String(value || 'initial').trim().toLowerCase() === 'final' ? 'Final Interview' : 'Initial Interview'
+const formatInterviewType = () => 'Interview'
 const formatInterviewMode = (value) =>
   String(value || 'in-person').trim().toLowerCase() === 'online' ? 'Online interview' : 'In-person interview'
 const normalizeInterviewScheduleStatus = (value) => String(value || 'scheduled').trim().toLowerCase()

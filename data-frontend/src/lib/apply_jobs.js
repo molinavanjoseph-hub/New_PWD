@@ -132,7 +132,7 @@ const normalizeApplyJobRecord = (record = {}) => ({
   ),
   interviewSchedule: text(record.interviewSchedule || record.interview_schedule),
   interviewDate: text(record.interviewDate || record.interview_date),
-  interviewType: text(record.interviewType || record.interview_type || 'initial') || 'initial',
+  interviewType: text(record.interviewType || record.interview_type || 'interview') || 'interview',
   interviewer: text(record.interviewer),
   interviewMode: text(record.interviewMode || record.interview_mode),
   interviewLocationOrLink: text(record.interviewLocationOrLink || record.interview_location_or_link),
@@ -161,8 +161,8 @@ const normalizeApplyJobRecord = (record = {}) => ({
     record.jobOfferResponseDeadline || record.job_offer_response_deadline || record.responseDeadline || record.response_deadline,
   ),
   jobOfferInterviewType: text(
-    record.jobOfferInterviewType || record.job_offer_interview_type || record.offerInterviewType || record.offer_interview_type || 'initial',
-  ) || 'initial',
+    record.jobOfferInterviewType || record.job_offer_interview_type || record.offerInterviewType || record.offer_interview_type || 'interview',
+  ) || 'interview',
   jobOfferSentAt: timestampText(record.jobOfferSentAt || record.job_offer_sent_at || record.sentAt || record.sent_at),
   jobOfferCreatedAt: timestampText(
     record.jobOfferCreatedAt || record.job_offer_created_at || record.offerCreatedAt || record.offer_created_at,

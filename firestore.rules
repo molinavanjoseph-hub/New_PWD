@@ -127,6 +127,52 @@ service cloud.firestore {
       return signedIn() && request.resource.data.workspace_owner_id == request.auth.uid;
     }
 
+    function isContractApplicant() {
+      return signedIn()
+        && (
+          resource.data.applicant_id == request.auth.uid
+          || (
+            request.auth.token.email != null
+            && resource.data.applicant_email == request.auth.token.email
+          )
+        );
+    }
+
+    function isContractWorkspaceOwner() {
+      return signedIn() && resource.data.workspace_owner_id == request.auth.uid;
+    }
+
+    function isContractWorkspaceOwnerCreate() {
+      return signedIn() && request.resource.data.workspace_owner_id == request.auth.uid;
+    }
+
+    function hasImmutableContractIdentity() {
+      return request.resource.data.workspace_owner_id == resource.data.workspace_owner_id
+        && request.resource.data.application_id == resource.data.application_id
+        && request.resource.data.applicant_id == resource.data.applicant_id
+        && request.resource.data.applicant_email == resource.data.applicant_email
+        && request.resource.data.job_id == resource.data.job_id;
+    }
+
+    function hasImmutableContractPayloadForApplicant() {
+      return request.resource.data.contract_title == resource.data.contract_title
+        && request.resource.data.contract_body == resource.data.contract_body
+        && request.resource.data.salary_offer == resource.data.salary_offer
+        && request.resource.data.start_date == resource.data.start_date
+        && request.resource.data.employment_type == resource.data.employment_type
+        && request.resource.data.notes == resource.data.notes
+        && request.resource.data.business_signature_name == resource.data.business_signature_name
+        && request.resource.data.business_signature_data_url == resource.data.business_signature_data_url
+        && request.resource.data.business_signed_at == resource.data.business_signed_at
+        && request.resource.data.completed_at == resource.data.completed_at;
+    }
+
+    function isContractApplicantUpdate() {
+      return isContractApplicant()
+        && hasImmutableContractIdentity()
+        && hasImmutableContractPayloadForApplicant();
+    }
+
     function hasImmutableAssessmentAssignmentIdentity() {
       return request.resource.data.workspace_owner_id == resource.data.workspace_owner_id
         && request.resource.data.applicant_id == resource.data.applicant_id
@@ -438,6 +484,19 @@ service cloud.firestore {
         || isInterviewApplicantUpdate();
       allow delete: if isAdmin()
         || isInterviewWorkspaceOwner();
+    }
+
+    match /contract_signing/{contractId} {
+      allow get, list: if isAdmin()
+        || isContractWorkspaceOwner()
+        || isContractApplicant();
+      allow create: if isAdmin()
+        || isContractWorkspaceOwnerCreate();
+      allow update: if isAdmin()
+        || isContractWorkspaceOwner()
+        || isContractApplicantUpdate();
+      allow delete: if isAdmin()
+        || isContractWorkspaceOwner();
     }
 
     match /apply_jobs/{applicationId} {

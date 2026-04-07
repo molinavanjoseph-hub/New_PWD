@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import DigitalSignaturePad from '@/components/DigitalSignaturePad.vue'
 
 const props = defineProps({
@@ -91,7 +91,19 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  activeBusinessProviderContractId: {
+    type: String,
+    default: '',
+  },
   completeBusinessContractSigning: {
+    type: Function,
+    default: () => {},
+  },
+  openBusinessContractDigitalApiSigning: {
+    type: Function,
+    default: () => {},
+  },
+  refreshBusinessContractDigitalApiStatus: {
     type: Function,
     default: () => {},
   },
@@ -103,6 +115,7 @@ const filters = computed(() => (Array.isArray(props.filterChips) ? props.filterC
 const currentRow = computed(() => props.selectedRow || null)
 const currentRecord = computed(() => props.selectedRecord || null)
 const canEditContracts = computed(() => props.canEditBusinessModule('contract-signing') === true)
+const isComposerOpen = ref(false)
 
 const formatDateLabel = (value, options = {}) => {
   const parsedValue = new Date(String(value || '').trim())
@@ -130,28 +143,27 @@ const resolveRowStatusLabel = (row = {}) =>
 const isSelectedRow = (rowId) => String(props.selectedRowId || '').trim() === String(rowId || '').trim()
 const isActiveSigning = (recordId) =>
   String(props.activeBusinessContractSigningId || '').trim() === String(recordId || '').trim()
+const isActiveProvider = (recordId) =>
+  String(props.activeBusinessProviderContractId || '').trim() === String(recordId || '').trim()
+
+const openComposer = (rowId) => {
+  props.selectRow(rowId)
+  isComposerOpen.value = true
+}
+
+const closeComposer = () => {
+  isComposerOpen.value = false
+}
+
+watch(currentRow, (row) => {
+  if (!row) isComposerOpen.value = false
+})
 </script>
 
 <template>
   <section class="business-contract-signing">
     <div class="business-contract-signing__hero business-job-post__lead">
       <div class="business-contract-signing__hero-copy business-job-post__copy">
-        <span class="business-contract-signing__eyebrow business-job-post__eyebrow">Offer &amp; Onboarding</span>
-        <h2>Contract Signing</h2>
-        <p>
-          Dito lang lalabas ang applicants na na-issue-han ng offer at nag-confirm na sa kanilang Job Offers page.
-          Mula rito puwede nang i-send ang contract at tapusin ang countersign flow.
-        </p>
-        <div class="business-job-post__lead-meta business-contract-signing__lead-meta">
-          <span class="business-job-post__lead-chip">
-            <i class="bi bi-clock-history" aria-hidden="true" />
-            {{ syncLabel }}
-          </span>
-          <span class="business-job-post__lead-chip">
-            <i class="bi bi-diagram-3" aria-hidden="true" />
-            {{ traceSummary }}
-          </span>
-        </div>
       </div>
     </div>
 
@@ -192,13 +204,12 @@ const isActiveSigning = (recordId) =>
       </button>
     </div>
 
-    <div class="business-contract-signing__layout">
-      <article class="business-contract-signing__panel business-job-post__panel">
+    <article class="business-contract-signing__panel business-job-post__panel">
         <div class="business-contract-signing__panel-head business-job-post__panel-head">
           <div>
             <p class="business-contract-signing__panel-label business-job-post__tips-label">Contract Queue</p>
-            <h3>Confirmed applicant table</h3>
-            <p>Kapag accepted na ang job offer, dito na sila lalabas para sa contract assignment.</p>
+            <h3>Interview-completed applicant table</h3>
+            <p>Applicants appear here once their interview is marked as completed, so the table can move straight into contract signing.</p>
           </div>
           <span class="business-contract-signing__count business-job-post__panel-chip">
             {{ contractRows.length }} {{ contractRows.length === 1 ? 'record' : 'records' }}
@@ -212,7 +223,8 @@ const isActiveSigning = (recordId) =>
                 <th>Applicant</th>
                 <th>Email</th>
                 <th>Role</th>
-                <th>Status</th>
+                <th>Interview</th>
+                <th>Contract Status</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -240,7 +252,15 @@ const isActiveSigning = (recordId) =>
                 <td>{{ row.email || 'No email' }}</td>
                 <td>
                   <strong>{{ row.role || row.jobTitle }}</strong>
-                  <small>{{ row.offerTitle || 'Issued Job Offer' }}</small>
+                  <small>{{ row.compensation || 'Compensation to be finalized' }}</small>
+                </td>
+                <td>
+                  <strong>{{ row.interviewStatusLabel || 'Interview Completed' }}</strong>
+                  <small>
+                    {{ row.interviewCompletedAt
+                      ? `Completed ${formatDateLabel(row.interviewCompletedAt, { hour: 'numeric', minute: '2-digit' })}`
+                      : 'Marked completed in interview' }}
+                  </small>
                 </td>
                 <td>
                   <span
@@ -256,9 +276,7 @@ const isActiveSigning = (recordId) =>
                         ? 'Applicant already signed'
                         : row.status === 'sent'
                           ? 'Waiting for applicant signature'
-                          : row.offerAcceptedAt
-                            ? `Offer confirmed ${formatDateLabel(row.offerAcceptedAt, { hour: 'numeric', minute: '2-digit' })}`
-                            : 'Ready to send contract' }}
+                          : 'Ready to send contract' }}
                   </small>
                 </td>
                 <td>
@@ -266,7 +284,7 @@ const isActiveSigning = (recordId) =>
                     <button
                       type="button"
                       class="business-contract-signing__row-button business-job-post__secondary"
-                      @click.stop="selectRow(row.id)"
+                      @click.stop="openComposer(row.id)"
                     >
                       Open
                     </button>
@@ -286,16 +304,23 @@ const isActiveSigning = (recordId) =>
                       }}
                     </button>
                     <button
-                      v-else-if="row.canBusinessSign || row.status === 'completed'"
+                      v-if="row.contractId"
                       type="button"
                       class="business-contract-signing__button business-contract-signing__button--secondary business-job-post__secondary"
-                      @click.stop="selectRow(row.id)"
+                      :disabled="isActiveProvider(row.contractId)"
+                      @click.stop="openBusinessContractDigitalApiSigning(row.contractId)"
                     >
-                      {{ row.status === 'completed' ? 'View Signatures' : 'Countersign' }}
+                      {{ isActiveProvider(row.contractId) ? 'Opening API...' : 'Open Digital API' }}
                     </button>
-                    <span v-else class="business-contract-signing__state-note">
-                      {{ row.status === 'completed' ? 'Completed' : 'Waiting' }}
-                    </span>
+                    <button
+                      v-if="row.providerEnvelopeId"
+                      type="button"
+                      class="business-contract-signing__button business-contract-signing__button--secondary business-job-post__secondary"
+                      :disabled="isActiveProvider(row.contractId)"
+                      @click.stop="refreshBusinessContractDigitalApiStatus(row.contractId)"
+                    >
+                      Refresh API Status
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -303,13 +328,12 @@ const isActiveSigning = (recordId) =>
 
             <tbody v-else>
               <tr>
-                <td colspan="5" class="business-contract-signing__empty-cell">
+                <td colspan="6" class="business-contract-signing__empty-cell">
                   <div class="business-contract-signing__empty business-contract-signing__empty--table">
                     <i class="bi bi-file-earmark-lock" aria-hidden="true" />
-                    <h3>No confirmed offers yet</h3>
+                    <h3>No interview-completed applicants yet</h3>
                     <p>
-                      Kailangan munang ma-send ang offer mula sa Issue Offer at i-confirm ng applicant sa Job Offers page
-                      bago sila pumasok dito sa Contract Signing.
+                      Applicants will appear here after their interview is marked as completed in the Interview section.
                     </p>
                     <small>{{ traceSummary }}</small>
                   </div>
@@ -318,36 +342,50 @@ const isActiveSigning = (recordId) =>
             </tbody>
           </table>
         </div>
-      </article>
+    </article>
 
-      <article class="business-contract-signing__panel business-contract-signing__panel--editor business-job-post__panel">
-        <template v-if="currentRow">
+    <teleport to="body">
+      <div
+        v-if="isComposerOpen && currentRow"
+        class="business-contract-signing__modal"
+        @click.self="closeComposer"
+      >
+        <article class="business-contract-signing__modal-card business-job-post__panel">
           <div class="business-contract-signing__panel-head business-job-post__panel-head">
             <div>
               <p class="business-contract-signing__panel-label business-job-post__tips-label">Contract Composer</p>
               <h3>{{ currentRow.name }}</h3>
               <p>{{ currentRow.jobTitle }} at {{ currentRow.businessName || 'Business Workspace' }}</p>
             </div>
-            <span
-              class="business-contract-signing__status business-contract-signing__status--head"
-              :class="`is-${resolveRowStatusTone(currentRow.status)}`"
-            >
-              {{ resolveRowStatusLabel(currentRow) }}
-            </span>
+            <div class="business-contract-signing__modal-status">
+              <span
+                class="business-contract-signing__status business-contract-signing__status--head"
+                :class="`is-${resolveRowStatusTone(currentRow.status)}`"
+              >
+                {{ resolveRowStatusLabel(currentRow) }}
+              </span>
+              <button
+                type="button"
+                class="business-contract-signing__icon-button"
+                @click="closeComposer"
+              >
+                <i class="bi bi-x-lg" aria-hidden="true" />
+              </button>
+            </div>
           </div>
 
           <div class="business-contract-signing__meta-grid">
             <div>
-              <span>Offer Status</span>
-              <strong>{{ currentRow.offerStatusLabel || 'Accepted' }}</strong>
+              <span>Interview Status</span>
+              <strong>{{ currentRow.interviewStatusLabel || 'Interview Completed' }}</strong>
             </div>
             <div>
               <span>Compensation</span>
               <strong>{{ currentRow.compensation || 'To be finalized' }}</strong>
             </div>
             <div>
-              <span>Offer Confirmed</span>
-              <strong>{{ currentRow.offerAcceptedAt ? formatDateLabel(currentRow.offerAcceptedAt, { hour: 'numeric', minute: '2-digit' }) : 'Not set' }}</strong>
+              <span>Interview Completed</span>
+              <strong>{{ currentRow.interviewCompletedAt ? formatDateLabel(currentRow.interviewCompletedAt, { hour: 'numeric', minute: '2-digit' }) : 'Not set' }}</strong>
             </div>
             <div>
               <span>Contract Sent</span>
@@ -441,6 +479,29 @@ const isActiveSigning = (recordId) =>
             </button>
           </div>
 
+          <div
+            v-if="currentRow.contractId"
+            class="business-contract-signing__actions business-contract-signing__actions--provider"
+          >
+            <button
+              type="button"
+              class="business-contract-signing__button business-contract-signing__button--primary business-job-post__save"
+              :disabled="isActiveProvider(currentRecord?.id || currentRow.contractId)"
+              @click="openBusinessContractDigitalApiSigning(currentRecord?.id || currentRow.contractId)"
+            >
+              {{ isActiveProvider(currentRecord?.id || currentRow.contractId) ? 'Opening API...' : 'Open Digital API' }}
+            </button>
+            <button
+              v-if="currentRecord?.providerEnvelopeId || currentRow.providerEnvelopeId"
+              type="button"
+              class="business-contract-signing__button business-contract-signing__button--secondary business-job-post__secondary"
+              :disabled="isActiveProvider(currentRecord?.id || currentRow.contractId)"
+              @click="refreshBusinessContractDigitalApiStatus(currentRecord?.id || currentRow.contractId)"
+            >
+              Refresh API Status
+            </button>
+          </div>
+
           <div class="business-contract-signing__timeline">
             <div class="business-contract-signing__timeline-item">
               <span>Contract sent</span>
@@ -496,17 +557,9 @@ const isActiveSigning = (recordId) =>
             @update:signer-name="setBusinessContractSignatureName($event)"
             @submit="completeBusinessContractSigning"
           />
-        </template>
-
-        <div v-else class="business-contract-signing__empty business-contract-signing__empty--detail">
-          <i class="bi bi-pen" aria-hidden="true" />
-          <h3>Select an applicant</h3>
-          <p>
-            Pumili ng applicant sa table para ma-prepare ang contract, ma-resend ito, o ma-complete ang countersign.
-          </p>
-        </div>
-      </article>
-    </div>
+        </article>
+      </div>
+    </teleport>
   </section>
 </template>
 
@@ -653,20 +706,8 @@ const isActiveSigning = (recordId) =>
   box-shadow: 0 14px 24px rgba(25, 135, 84, 0.2);
 }
 
-.business-contract-signing__layout {
-  display: grid;
-  gap: 1.25rem;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.95fr);
-}
-
 .business-contract-signing__panel {
   padding: 1.1rem;
-}
-
-.business-contract-signing__panel--editor {
-  display: grid;
-  align-content: start;
-  gap: 1rem;
 }
 
 .business-contract-signing__panel-head {
@@ -844,17 +885,38 @@ const isActiveSigning = (recordId) =>
   align-items: center;
 }
 
-.business-contract-signing__state-note {
-  display: inline-flex;
+.business-contract-signing__modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(19, 34, 27, 0.42);
+  backdrop-filter: blur(4px);
+}
+
+.business-contract-signing__modal-card {
+  width: min(74rem, 100%);
+  max-height: calc(100vh - 3rem);
+  overflow: auto;
+  padding: 1.25rem;
+}
+
+.business-contract-signing__modal-status {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 2.45rem;
-  padding: 0.7rem 1rem;
-  border-radius: 0.82rem;
-  background: rgba(148, 163, 184, 0.14);
-  color: #475569;
-  font-size: 0.8rem;
-  font-weight: 700;
+  gap: 0.75rem;
+}
+
+.business-contract-signing__icon-button {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid rgba(203, 213, 208, 0.96);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #305141;
+  cursor: pointer;
 }
 
 .business-contract-signing__timeline {
@@ -921,20 +983,16 @@ const isActiveSigning = (recordId) =>
   border-radius: 0;
 }
 
-@media (max-width: 1180px) {
-  .business-contract-signing__layout {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 720px) {
   .business-contract-signing__hero,
-  .business-contract-signing__panel {
+  .business-contract-signing__panel,
+  .business-contract-signing__modal-card {
     padding: 1rem;
   }
 
   .business-contract-signing__toolbar,
-  .business-contract-signing__panel-head {
+  .business-contract-signing__panel-head,
+  .business-contract-signing__modal-status {
     flex-direction: column;
   }
 

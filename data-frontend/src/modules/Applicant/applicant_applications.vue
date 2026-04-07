@@ -164,9 +164,9 @@ const timelineVisualIcon = (step) => {
 
   if (timelineId.startsWith('application-sent')) return 'bi bi-send'
   if (timelineId.startsWith('technical-assessment')) return 'bi bi-clipboard2-pulse'
-  if (timelineId.startsWith('initial-interview')) return 'bi bi-camera-video'
-  if (timelineId.startsWith('final-interview')) return 'bi bi-people'
+  if (timelineId.startsWith('interview')) return 'bi bi-camera-video'
   if (timelineId.startsWith('job-offer')) return 'bi bi-briefcase'
+  if (timelineId.startsWith('contract-signing')) return 'bi bi-file-earmark-check'
   if (timelineId.startsWith('training')) return 'bi bi-mortarboard'
   return 'bi bi-circle'
 }
@@ -300,11 +300,6 @@ watch(selectedApplicationCount, (count) => {
                 <span><i :class="item.icon" aria-hidden="true" /> {{ item.label }}</span>
                 <strong>{{ item.value }}</strong>
               </article>
-            </div>
-
-            <div class="applicant-applications-page__hero-outcome">
-              <span>Outcome Summary</span>
-              <strong>{{ applicationOutcomeLabel }}</strong>
             </div>
           </div>
         </section>

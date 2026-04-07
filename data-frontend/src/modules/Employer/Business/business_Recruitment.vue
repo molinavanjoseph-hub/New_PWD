@@ -21,7 +21,9 @@ const props = defineProps([
   'JOB_POSTING_MAX_VACANCIES',
   'JOB_POSTING_DISABILITY_TYPES',
   'jobPostingDisabilityLabel',
+  'jobPostingSelectedDisabilityTypes',
   'jobPostingDisabilityTypeNeedsSpecification',
+  'setJobPostingDisabilityTypes',
   'getJobPostingImpairmentSpecificationPlaceholder',
   'JOB_POSTING_LANGUAGE_OPTIONS',
   'jobPostingLanguageLabel',
@@ -76,7 +78,9 @@ const {
   JOB_POSTING_MAX_VACANCIES,
   JOB_POSTING_DISABILITY_TYPES,
   jobPostingDisabilityLabel,
+  jobPostingSelectedDisabilityTypes,
   jobPostingDisabilityTypeNeedsSpecification,
+  setJobPostingDisabilityTypes,
   getJobPostingImpairmentSpecificationPlaceholder,
   JOB_POSTING_LANGUAGE_OPTIONS,
   jobPostingLanguageLabel,
@@ -118,37 +122,67 @@ const countJobPostingWords = (value = '') =>
 const descriptionWordCount = computed(() => countJobPostingWords(jobPostingDraft.value?.description))
 const qualificationWordCount = computed(() => countJobPostingWords(jobPostingDraft.value?.qualifications))
 const responsibilityWordCount = computed(() => countJobPostingWords(jobPostingDraft.value?.responsibilities))
-const isJobPostConfirmOpen = ref(false)
-const jobPostConfirmTitle = computed(() =>
-  isEditingJobPost.value ? 'Save job changes' : 'Post this job',
-)
-const jobPostConfirmMessage = computed(() =>
-  isEditingJobPost.value
-    ? 'Do you want to save these job post changes now?'
-    : 'Do you want to publish this job post now?',
-)
-const openJobPostConfirm = () => {
-  if (isSavingJobPost.value) return
-
-  isJobPostConfirmOpen.value = true
+const isDisabilityTypeModalOpen = ref(false)
+const disabilityTypeModalSelections = ref([])
+const syncDisabilityTypeModalSelections = () => {
+  disabilityTypeModalSelections.value = Array.isArray(jobPostingSelectedDisabilityTypes.value)
+    ? [...jobPostingSelectedDisabilityTypes.value]
+    : []
 }
-const closeJobPostConfirm = () => {
-  if (isSavingJobPost.value) return
-
-  isJobPostConfirmOpen.value = false
+const resolveDisabilityTypeUpdater = () => {
+  if (typeof props.setJobPostingDisabilityTypes === 'function') return props.setJobPostingDisabilityTypes
+  if (typeof setJobPostingDisabilityTypes.value === 'function') return setJobPostingDisabilityTypes.value
+  return null
 }
-const confirmJobPost = async () => {
-  if (typeof saveJobPost.value === 'function') {
-    const didSave = await saveJobPost.value()
-    if (didSave) {
-      isJobPostConfirmOpen.value = false
+const resolveDisabilityTypeLabel = (type = {}) =>
+  String(type?.label || type?.value || '').trim()
+const openDisabilityTypeModal = () => {
+  syncDisabilityTypeModalSelections()
+  isDisabilityTypeModalOpen.value = true
+}
+const closeDisabilityTypeModal = () => {
+  isDisabilityTypeModalOpen.value = false
+  syncDisabilityTypeModalSelections()
+}
+const toggleDisabilityTypeModalSelection = (value) => {
+  const normalizedValue = String(value || '').trim()
+  if (!normalizedValue) return
+
+  disabilityTypeModalSelections.value = disabilityTypeModalSelections.value.includes(normalizedValue)
+    ? disabilityTypeModalSelections.value.filter((entry) => entry !== normalizedValue)
+    : [...disabilityTypeModalSelections.value, normalizedValue]
+}
+const clearDisabilityTypeModalSelections = () => {
+  disabilityTypeModalSelections.value = []
+}
+const applyDisabilityTypeModalSelections = () => {
+  const updateDisabilityTypes = resolveDisabilityTypeUpdater()
+  if (!updateDisabilityTypes) return
+
+  updateDisabilityTypes(disabilityTypeModalSelections.value)
+  isDisabilityTypeModalOpen.value = false
+}
+watch(
+  jobPostingSelectedDisabilityTypes,
+  () => {
+    if (!isDisabilityTypeModalOpen.value) {
+      syncDisabilityTypeModalSelections()
     }
-  }
+  },
+  { immediate: true, deep: true },
+)
+const resolveSaveJobPostHandler = () => {
+  if (typeof props.saveJobPost === 'function') return props.saveJobPost
+  if (typeof saveJobPost.value === 'function') return saveJobPost.value
+  return null
 }
+const handleJobPostSubmit = async () => {
+  if (isSavingJobPost.value) return
+  const saveJobPostHandler = resolveSaveJobPostHandler()
+  if (!saveJobPostHandler) return
 
-watch([jobPostingTab, isEditingJobPost], () => {
-  isJobPostConfirmOpen.value = false
-})
+  await saveJobPostHandler()
+}
 </script>
 
 <template>
@@ -190,7 +224,7 @@ watch([jobPostingTab, isEditingJobPost], () => {
 
               <div v-if="jobPostingTab === 'create'" class="business-job-post__create">
                 <div class="business-job-post__shell">
-                  <form class="business-job-post__form-shell" @submit.prevent="openJobPostConfirm">
+                  <form class="business-job-post__form-shell" @submit.prevent="handleJobPostSubmit">
                     <fieldset class="business-job-post__fieldset" :disabled="!canEditBusinessModule('job-posting')">
                       <div class="business-job-post__section-head">
                         <div>
@@ -397,34 +431,30 @@ watch([jobPostingTab, isEditingJobPost], () => {
                               <div
                                 :ref="setJobPostingDisabilityDropdownElement"
                                 class="business-job-post__select-wrap"
-                                :class="{ 'is-open': isJobPostingDropdownOpen('disability') }"
                               >
                                 <button
                                   type="button"
                                   class="business-job-post__select-trigger"
-                                  :class="{ 'is-filled': jobPostingDraft.disabilityType }"
-                                  :aria-expanded="isJobPostingDropdownOpen('disability') ? 'true' : 'false'"
-                                  @click="toggleJobPostingDropdown('disability')"
+                                  :class="{ 'is-filled': jobPostingSelectedDisabilityTypes.length }"
+                                  :aria-expanded="isDisabilityTypeModalOpen ? 'true' : 'false'"
+                                  aria-haspopup="dialog"
+                                  @click="openDisabilityTypeModal"
                                 >
                                   <span>{{ jobPostingDisabilityLabel }}</span>
-                                  <i class="bi bi-chevron-down business-job-post__select-icon" aria-hidden="true" />
+                                  <i class="bi bi-ui-checks-grid business-job-post__select-icon" aria-hidden="true" />
                                 </button>
-
-                                <transition name="business-job-post__dropdown">
-                                  <div v-if="isJobPostingDropdownOpen('disability')" class="business-job-post__select-menu business-job-post__select-menu--scroll">
-                                    <button
-                                      v-for="type in JOB_POSTING_DISABILITY_TYPES"
-                                      :key="type.value"
-                                      type="button"
-                                      class="business-job-post__select-option"
-                                      :class="{ 'is-active': jobPostingDraft.disabilityType === type.value }"
-                                      @click="selectJobPostingDropdownValue('disabilityType', type.value)"
-                                    >
-                                      <span class="business-job-post__select-option-mark" aria-hidden="true" />
-                                      <span>{{ type.label }}</span>
-                                    </button>
-                                  </div>
-                                </transition>
+                              </div>
+                              <div class="business-job-post__field-meta">
+                                <small class="business-job-post__field-help">Choose one or more disability types from the checklist.</small>
+                              </div>
+                              <div v-if="jobPostingSelectedDisabilityTypes.length" class="business-job-post__selection-chips">
+                                <span
+                                  v-for="type in JOB_POSTING_DISABILITY_TYPES.filter((entry) => jobPostingSelectedDisabilityTypes.includes(entry.value))"
+                                  :key="`job-post-selected-disability-${type.value}`"
+                                  class="business-job-post__selection-chip"
+                                >
+                                  {{ resolveDisabilityTypeLabel(type) }}
+                                </span>
                               </div>
                             </label>
 
@@ -435,11 +465,11 @@ watch([jobPostingTab, isEditingJobPost], () => {
                                 type="text"
                                 inputmode="numeric"
                                 maxlength="3"
-                                placeholder="Enter preferred age"
+                                placeholder="18 and above"
                                 @input="handleJobPostingFieldChange('preferredAgeRange', $event.target.value)"
                               />
                               <div class="business-job-post__field-meta">
-                                <small class="business-job-post__field-help">Numbers only.</small>
+                                <small class="business-job-post__field-help">Numbers only. Minimum age is 18.</small>
                               </div>
                             </label>
 
@@ -635,7 +665,7 @@ watch([jobPostingTab, isEditingJobPost], () => {
                       </p>
                       <p>
                         <strong>Preferred Age:</strong>
-                        {{ ` ${jobPostingDraft.preferredAgeRange || 'Enter preferred age'}` }}
+                        {{ ` ${jobPostingDraft.preferredAgeRange || '18 and above'}` }}
                       </p>
                     </div>
 
@@ -693,10 +723,8 @@ watch([jobPostingTab, isEditingJobPost], () => {
                           {{
                             buildJobPostingDisabilityFitLabel(
                               jobPostingDraft.disabilityType,
-                              jobPostingDisabilityTypeNeedsSpecification
-                                ? jobPostingDraft.impairmentSpecification
-                                : '',
-                            ) || 'Select disability type'
+                              '',
+                            ) || 'Select disability types'
                           }}
                         </strong>
                       </div>
@@ -816,33 +844,86 @@ watch([jobPostingTab, isEditingJobPost], () => {
               </div>
             </section>
 
-<Transition name="business-trial-modal">
-  <div v-if="isJobPostConfirmOpen" class="business-modal" @click.self="closeJobPostConfirm">
-    <div class="business-modal__card" role="dialog" aria-modal="true" aria-labelledby="business-job-post-confirm-title">
-      <div class="business-modal__copy">
-        <h2 id="business-job-post-confirm-title">{{ jobPostConfirmTitle }}</h2>
-        <p>{{ jobPostConfirmMessage }}</p>
-        <p class="business-modal__note">Select No to keep editing, or Yes to continue.</p>
+<teleport to="body">
+  <div
+    v-if="isDisabilityTypeModalOpen"
+    class="business-job-post__modal-backdrop"
+    @click.self="closeDisabilityTypeModal"
+  >
+    <div
+      class="business-job-post__modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="business-job-post-disability-modal-title"
+    >
+      <div class="business-job-post__modal-head">
+        <div>
+          <p class="business-job-post__tips-label">Disability Type</p>
+          <strong id="business-job-post-disability-modal-title">Select one or more disability types</strong>
+        </div>
+        <button
+          type="button"
+          class="business-job-post__modal-close"
+          aria-label="Close disability type selector"
+          @click="closeDisabilityTypeModal"
+        >
+          <i class="bi bi-x-lg" aria-hidden="true" />
+        </button>
       </div>
-      <div class="business-modal__actions">
-        <button
-          type="button"
-          class="business-modal__button business-modal__button--secondary"
-          :disabled="isSavingJobPost"
-          @click="closeJobPostConfirm"
-        >
-          No
-        </button>
-        <button
-          type="button"
-          class="business-modal__button business-modal__button--primary"
-          :disabled="isSavingJobPost"
-          @click="confirmJobPost"
-        >
-          {{ isSavingJobPost ? (isEditingJobPost ? 'Saving...' : 'Posting...') : 'Yes' }}
-        </button>
+
+      <div class="business-job-post__modal-body">
+        <p class="business-job-post__modal-copy">
+          Tick every disability type that fits this job opening. You can keep one selection or combine several.
+        </p>
+
+        <div class="business-job-post__checklist">
+          <label
+            v-for="type in JOB_POSTING_DISABILITY_TYPES"
+            :key="`job-post-disability-option-${type.value}`"
+            class="business-job-post__check-option"
+            :class="{ 'is-active': disabilityTypeModalSelections.includes(type.value) }"
+          >
+            <input
+              :checked="disabilityTypeModalSelections.includes(type.value)"
+              type="checkbox"
+              @change="toggleDisabilityTypeModalSelection(type.value)"
+            />
+            <span>{{ resolveDisabilityTypeLabel(type) }}</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="business-job-post__modal-foot">
+        <span class="business-job-post__modal-selection-count">
+          {{ disabilityTypeModalSelections.length ? `${disabilityTypeModalSelections.length} selected` : 'No disability type selected yet' }}
+        </span>
+
+        <div class="business-job-post__modal-actions">
+          <button
+            type="button"
+            class="business-job-post__button business-job-post__button--ghost"
+            @click="clearDisabilityTypeModalSelections"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            class="business-job-post__button business-job-post__button--ghost"
+            @click="closeDisabilityTypeModal"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="business-job-post__button"
+            @click="applyDisabilityTypeModalSelections"
+          >
+            Apply Selection
+          </button>
+        </div>
       </div>
     </div>
   </div>
-</Transition>
+</teleport>
+
 </template>

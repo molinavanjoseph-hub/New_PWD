@@ -108,7 +108,7 @@ export const normalizeJobOfferRecord = (record = {}) => ({
   applicantAvatar: text(record.applicantAvatar || record.applicant_avatar || record.avatar || record.avatar_url),
   jobId: text(record.jobId || record.job_id),
   jobTitle: text(record.jobTitle || record.job_title),
-  interviewType: text(record.interviewType || record.interview_type || 'initial') || 'initial',
+  interviewType: text(record.interviewType || record.interview_type || 'interview') || 'interview',
   offerTitle: text(record.offerTitle || record.offer_title),
   offerLetter: text(record.offerLetter || record.offer_letter),
   compensation: text(record.compensation || record.salary || record.salary_range),
@@ -152,8 +152,8 @@ export const buildJobOfferRecordFromApplication = (record = {}) => {
       || record?.job_offer_interview_type
       || record?.interviewType
       || record?.interview_type
-      || 'initial',
-    ) || 'initial',
+      || 'interview',
+    ) || 'interview',
     offerTitle: text(record?.jobOfferTitle || record?.job_offer_title),
     offerLetter: text(record?.jobOfferLetter || record?.job_offer_letter),
     compensation: text(record?.jobOfferCompensation || record?.job_offer_compensation),
@@ -175,6 +175,11 @@ export const buildJobOfferRecordFromApplication = (record = {}) => {
 }
 
 const buildJobOfferApplicationMirrorPayload = (record = {}) => stripUndefined({
+  status: ['accepted', 'confirmed', 'signed'].includes(text(record?.offerStatus || record?.offer_status).toLowerCase())
+    ? 'accepted'
+    : ['declined', 'rejected', 'cancelled', 'canceled', 'expired'].includes(text(record?.offerStatus || record?.offer_status).toLowerCase())
+      ? 'declined'
+      : undefined,
   jobOfferId: text(record?.id || record?.offerId || record?.offer_id || record?.applicationId || record?.application_id),
   jobOfferStatus: text(record?.offerStatus || record?.offer_status),
   jobOfferTitle: text(record?.offerTitle || record?.offer_title),
@@ -182,7 +187,7 @@ const buildJobOfferApplicationMirrorPayload = (record = {}) => stripUndefined({
   jobOfferCompensation: text(record?.compensation || record?.salary || record?.salary_range),
   jobOfferStartDate: text(record?.startDate || record?.start_date),
   jobOfferResponseDeadline: text(record?.responseDeadline || record?.response_deadline),
-  jobOfferInterviewType: text(record?.interviewType || record?.interview_type || 'initial') || 'initial',
+  jobOfferInterviewType: text(record?.interviewType || record?.interview_type || 'interview') || 'interview',
   jobOfferSentAt: timestampText(record?.sentAt || record?.sent_at),
   jobOfferCreatedAt: timestampText(record?.createdAt || record?.created_at),
   jobOfferUpdatedAt: timestampText(record?.updatedAt || record?.updated_at) || nowIso(),
@@ -211,7 +216,9 @@ export const saveJobOfferRecord = async (payload = {}) => {
     throw new Error('Missing application, business, applicant, or job details for this job offer.')
   }
 
-  const sentAt = normalized.sentAt || (normalized.offerStatus === 'sent' ? nowIso() : '')
+  const createdAt = normalized.createdAt || nowIso()
+  const updatedAt = nowIso()
+  const sentAt = normalized.sentAt || (normalized.offerStatus === 'sent' ? updatedAt : '')
   const docRef = doc(db, JOB_OFFERS_COLLECTION, documentId)
 
   await setDoc(docRef, stripUndefined({
@@ -235,17 +242,23 @@ export const saveJobOfferRecord = async (payload = {}) => {
     applicant_response_note: normalized.applicantResponseNote,
     applicant_responded_at: normalized.applicantRespondedAt,
     sent_at: sentAt,
-    created_at: normalized.createdAt || nowIso(),
+    created_at: createdAt,
     created_at_server: normalized.createdAt ? undefined : serverTimestamp(),
-    updated_at: nowIso(),
+    updated_at: updatedAt,
     updated_at_server: serverTimestamp(),
   }), { merge: true })
 
-  return {
+  const savedOffer = {
     ...normalized,
     id: documentId,
+    createdAt,
+    updatedAt,
     sentAt,
   }
+
+  await syncJobOfferApplicationMirror(savedOffer)
+
+  return savedOffer
 }
 
 const saveBusinessJobOfferViaFunction = async (payload = {}) => {
@@ -303,7 +316,6 @@ export const saveBusinessJobOfferRecord = async (payload = {}) => {
 
       try {
         const savedOffer = await saveJobOfferRecord(payload)
-        await syncJobOfferApplicationMirror(savedOffer, { strict: true })
         return savedOffer
       } catch (firestoreError) {
         throw new Error(

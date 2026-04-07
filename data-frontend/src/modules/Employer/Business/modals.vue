@@ -145,82 +145,37 @@ const {
               {{ applicantManagementModalState.mode === 'reject' ? 'Reject applicant' : 'Applicant details' }}
             </h2>
             <p v-if="selectedApplicantManagementDetails">
-              Review the applicant details below and decide whether to approve or reject the application.
+              Review the applicant resume below and decide whether to approve or reject the application.
             </p>
           </div>
 
           <div v-if="selectedApplicantManagementDetails" class="business-applicants-modal__body">
-            <div class="business-applicants-modal__identity">
-              <div class="business-applicants-modal__avatar">
-                <img
-                  v-if="selectedApplicantManagementDetails.applicantAvatar"
-                  :src="selectedApplicantManagementDetails.applicantAvatar"
-                  :alt="`${selectedApplicantManagementDetails.applicantName} avatar`"
+            <div v-if="selectedApplicantManagementDetails.applicantResumeUrl" class="business-applicants-modal__resume">
+              <div class="business-applicants-modal__resume-head">
+                <div>
+                  <span>Resume PDF</span>
+                  <strong>{{ selectedApplicantManagementDetails.applicantResumeFileName }}</strong>
+                </div>
+                <a
+                  class="business-applicants-modal__resume-link"
+                  :href="selectedApplicantManagementDetails.applicantResumeUrl"
+                  target="_blank"
+                  rel="noopener noreferrer"
                 >
-                <template v-else>{{ buildUserOverviewInitials(selectedApplicantManagementDetails.applicantName, 'AP') }}</template>
+                  Open in new tab
+                </a>
               </div>
-
-              <div class="business-applicants-modal__identity-copy">
-                <strong>{{ selectedApplicantManagementDetails.applicantName }}</strong>
-                <span>{{ selectedApplicantManagementDetails.applicantEmail }}</span>
-                <span class="business-user-overview__status" :class="`is-${normalizeUserOverviewValue(selectedApplicantManagementDetails.statusLabel).replace(/\s+/g, '-')}`">
-                  {{ selectedApplicantManagementDetails.statusLabel }}
-                </span>
-              </div>
+              <iframe
+                class="business-applicants-modal__resume-frame"
+                :src="selectedApplicantManagementDetails.applicantResumeUrl"
+                :title="`${selectedApplicantManagementDetails.applicantName} resume`"
+              />
             </div>
 
-            <div class="business-applicants-modal__grid">
-              <div class="business-applicants-modal__item">
-                <span>Application ID</span>
-                <strong>{{ selectedApplicantManagementDetails.id }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Applied Job</span>
-                <strong>{{ selectedApplicantManagementDetails.jobTitle }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Applied Date</span>
-                <strong>{{ selectedApplicantManagementDetails.appliedAtLabel }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Disability Type</span>
-                <strong>{{ selectedApplicantManagementDetails.disabilityLabel }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Preferred Language</span>
-                <strong>{{ selectedApplicantManagementDetails.languageLabel }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Barangay</span>
-                <strong>{{ selectedApplicantManagementDetails.barangayLabel }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Contact Number</span>
-                <strong>{{ selectedApplicantManagementDetails.contactNumber }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Sex / Age</span>
-                <strong>{{ selectedApplicantManagementDetails.sex }} / {{ selectedApplicantManagementDetails.age }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>Birth Date</span>
-                <strong>{{ selectedApplicantManagementDetails.birthDate }}</strong>
-              </div>
-              <div class="business-applicants-modal__item">
-                <span>PWD ID</span>
-                <strong>{{ selectedApplicantManagementDetails.pwdId }}</strong>
-              </div>
-              <div class="business-applicants-modal__item business-applicants-modal__item--wide">
-                <span>Address</span>
-                <strong>{{ selectedApplicantManagementDetails.fullAddress }}</strong>
-              </div>
-              <div
-                v-if="selectedApplicantManagementDetails.rejectionReason && applicantManagementModalState.mode !== 'reject'"
-                class="business-applicants-modal__item business-applicants-modal__item--wide"
-              >
-                <span>Saved Rejection Reason</span>
-                <strong>{{ selectedApplicantManagementDetails.rejectionReason }}</strong>
-              </div>
+            <div v-else class="business-applicants-modal__resume business-applicants-modal__resume--empty">
+              <span>Resume PDF</span>
+              <strong>No resume PDF available for this applicant yet.</strong>
+              <p>The application can still be reviewed, but there is no uploaded resume file to display.</p>
             </div>
 
             <label v-if="applicantManagementModalState.mode === 'reject'" class="business-applicants-modal__reason">

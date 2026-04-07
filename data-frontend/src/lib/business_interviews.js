@@ -75,7 +75,7 @@ export const normalizeBusinessInterviewScheduleRecord = (record = {}) => ({
   applicantAvatar: text(record.applicantAvatar || record.applicant_avatar || record.avatar || record.avatar_url),
   jobId: text(record.jobId || record.job_id),
   jobTitle: text(record.jobTitle || record.job_title),
-  interviewType: text(record.interviewType || record.interview_type || 'initial') || 'initial',
+  interviewType: text(record.interviewType || record.interview_type || 'interview') || 'interview',
   scheduledAt: timestampText(record.scheduledAt || record.scheduled_at),
   mode: text(record.mode || 'in-person') || 'in-person',
   locationOrLink: text(record.locationOrLink || record.location_or_link),

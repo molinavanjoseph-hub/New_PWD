@@ -16,6 +16,14 @@
   box-shadow: 0 14px 32px rgba(28, 73, 46, 0.08);
 }
 
+.applicant-navbar--compact {
+  min-height: 0;
+  padding-block: 0.72rem;
+  background:
+    linear-gradient(135deg, rgba(248, 252, 249, 0.94) 0%, rgba(238, 247, 242, 0.94) 56%, rgba(227, 242, 233, 0.9) 100%);
+  box-shadow: 0 10px 24px rgba(28, 73, 46, 0.06);
+}
+
 .applicant-navbar__left {
   min-width: 0;
   flex: 1;
@@ -86,6 +94,20 @@
   display: grid;
   gap: 0.14rem;
   min-width: 0;
+}
+
+.applicant-navbar--compact .applicant-navbar__left {
+  gap: 0;
+}
+
+.applicant-navbar--compact .applicant-navbar__breadcrumb {
+  font-size: 0.82rem;
+}
+
+.applicant-navbar--compact .applicant-navbar__breadcrumb-home {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.8rem;
 }
 
 .applicant-navbar__eyebrow,

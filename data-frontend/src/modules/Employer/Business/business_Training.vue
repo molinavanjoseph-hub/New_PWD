@@ -27,12 +27,17 @@ const props = defineProps([
   'canEditTrainingAssignments',
   'assignableTrainingTemplates',
   'assignTrainingTemplateToMember',
+  'removeAssignedTrainingTemplateFromMember',
   'getAssignableTrainingTemplateLabel',
   'resolveTrainingTrackingProgressTone',
   'isTrainingTrackingDetailView',
   'selectedTrainingTrackingAssignment',
   'openTrainingTrackingDetail',
   'returnToTrainingTrackingTable',
+  'isTrainingTrackingCategorySelected',
+  'toggleTrainingTrackingCategorySelection',
+  'isTrainingTrackingSkillSelected',
+  'toggleTrainingTrackingSkillSelection',
   'TRAINING_TRACKING_GRADE_SCALE',
   'isTrainingTrackingSkillSaving',
   'toggleTrainingAssignmentSkillCompletion',
@@ -72,12 +77,17 @@ const {
   canEditTrainingAssignments,
   assignableTrainingTemplates,
   assignTrainingTemplateToMember,
+  removeAssignedTrainingTemplateFromMember,
   getAssignableTrainingTemplateLabel,
   resolveTrainingTrackingProgressTone,
   isTrainingTrackingDetailView,
   selectedTrainingTrackingAssignment,
   openTrainingTrackingDetail,
   returnToTrainingTrackingTable,
+  isTrainingTrackingCategorySelected,
+  toggleTrainingTrackingCategorySelection,
+  isTrainingTrackingSkillSelected,
+  toggleTrainingTrackingSkillSelection,
   TRAINING_TRACKING_GRADE_SCALE,
   isTrainingTrackingSkillSaving,
   toggleTrainingAssignmentSkillCompletion,
@@ -175,6 +185,16 @@ const {
                       <label class="business-template-builder__field">
                         <span>Description</span>
                         <textarea v-model="trainingTemplateDraft.description" rows="3" placeholder="Describe what this training template covers." />
+                      </label>
+                      <label class="business-template-builder__field">
+                        <span>Passing Score (%)</span>
+                        <input
+                          v-model.number="trainingTemplateDraft.passingScorePercent"
+                          type="number"
+                          min="1"
+                          max="100"
+                          placeholder="70"
+                        />
                       </label>
                     </article>
 
@@ -279,6 +299,10 @@ const {
                           <span>Format</span>
                           <strong>Custom Skill Map</strong>
                         </div>
+                        <div class="business-template-preview__detail">
+                          <span>Passing Score</span>
+                          <strong>{{ trainingTemplateDraft.passingScorePercent || 70 }}%</strong>
+                        </div>
                       </div>
 
                       <article
@@ -323,7 +347,7 @@ const {
                   <div>
                     <p class="business-assign-templates__eyebrow">Training Assignment</p>
                     <h2>Assign saved training templates without leaving this page</h2>
-                    <p>Choose a saved training template and assign it only to applicants who already completed the final interview.</p>
+                    <p>Choose a saved training template and assign it only to applicants who already completed the interview.</p>
                   </div>
                   <div class="business-assign-templates__summary">
                     <span>{{ readyTrainingTemplateRows.length }} ready applicants</span>
@@ -422,7 +446,7 @@ const {
                   </div>
                   <div v-else class="business-assign-templates__empty">
                     <strong>No applicants are ready for training assignment yet</strong>
-                    <p>Only applicants with a completed final interview will appear in this table.</p>
+                    <p>Only applicants with a completed interview will appear in this table.</p>
                   </div>
                 </article>
 
@@ -436,6 +460,7 @@ const {
                           <th>Assigned Template</th>
                           <th>Assigned Date</th>
                           <th>Progress</th>
+                          <th>Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -447,7 +472,20 @@ const {
                             </div>
                           </td>
                           <td>{{ member.role }}</td>
-                          <td>{{ getAssignableTrainingTemplateLabel(member.selectedTemplateId, member.templateTitle) }}</td>
+                          <td>
+                            <select
+                              v-model="member.selectedTemplateId"
+                              class="business-assign-templates__select"
+                              :disabled="!canEditTrainingAssignments || !assignableTrainingTemplates.length"
+                            >
+                              <option value="">
+                                {{ assignableTrainingTemplates.length ? 'Select template' : 'No saved templates yet' }}
+                              </option>
+                              <option v-for="template in assignableTrainingTemplates" :key="template.id" :value="template.id">
+                                {{ template.title }}
+                              </option>
+                            </select>
+                          </td>
                           <td>{{ member.assignedAt || 'Not set' }}</td>
                           <td>
                             <span
@@ -456,6 +494,30 @@ const {
                             >
                               {{ member.progressStatus }}
                             </span>
+                          </td>
+                          <td>
+                            <div class="business-assign-templates__actions">
+                              <button
+                                type="button"
+                                class="business-assign-templates__action business-assign-templates__action--icon"
+                                title="Reassign training template"
+                                aria-label="Reassign training template"
+                                :disabled="!canEditTrainingAssignments || !assignableTrainingTemplates.length || !member.selectedTemplateId"
+                                @click="assignTrainingTemplateToMember(member.id)"
+                              >
+                                <i class="bi bi-arrow-repeat" aria-hidden="true" />
+                              </button>
+                              <button
+                                type="button"
+                                class="business-assign-templates__action business-assign-templates__action--icon business-assign-templates__action--danger"
+                                title="Remove assigned template"
+                                aria-label="Remove assigned template"
+                                :disabled="!canEditTrainingAssignments"
+                                @click="removeAssignedTrainingTemplateFromMember(member.id)"
+                              >
+                                <i class="bi bi-trash3" aria-hidden="true" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       </tbody>
@@ -609,8 +671,15 @@ const {
                           v-for="category in selectedTrainingTrackingAssignment.templateCategories"
                           :key="`${selectedTrainingTrackingAssignment.id}-${category.id}`"
                           class="business-assign-templates__tracking-category"
+                          :class="{ 'is-selected': isTrainingTrackingCategorySelected(category.id) }"
                         >
-                          <div class="business-assign-templates__tracking-category-head">
+                          <button
+                            type="button"
+                            class="business-assign-templates__tracking-category-head business-assign-templates__tracking-category-toggle"
+                            :class="{ 'is-selected': isTrainingTrackingCategorySelected(category.id) }"
+                            :aria-expanded="isTrainingTrackingCategorySelected(category.id) ? 'true' : 'false'"
+                            @click="toggleTrainingTrackingCategorySelection(category.id)"
+                          >
                             <div>
                               <strong>{{ category.title || 'Untitled category' }}</strong>
                               <span>
@@ -622,149 +691,162 @@ const {
                               <strong>{{ category.progress.percent }}%</strong>
                               <small>{{ category.score.gradedSkills }}/{{ category.progress.totalSkills || 0 }} graded</small>
                             </div>
-                          </div>
+                          </button>
 
-                          <div
-                            v-if="category.progress.totalSkills"
-                            class="business-assign-templates__tracking-progress-bar business-assign-templates__tracking-progress-bar--category"
-                            aria-hidden="true"
-                          >
-                            <span
-                              class="business-assign-templates__tracking-progress-fill"
-                              :style="{ width: `${category.progress.percent}%` }"
-                            />
-                          </div>
+                          <template v-if="isTrainingTrackingCategorySelected(category.id)">
+                            <div
+                              v-if="category.progress.totalSkills"
+                              class="business-assign-templates__tracking-progress-bar business-assign-templates__tracking-progress-bar--category"
+                              aria-hidden="true"
+                            >
+                              <span
+                                class="business-assign-templates__tracking-progress-fill"
+                                :style="{ width: `${category.progress.percent}%` }"
+                              />
+                            </div>
 
-                          <div v-if="category.skills.length" class="business-assign-templates__tracking-skills">
+                            <div v-if="category.skills.length" class="business-assign-templates__tracking-skills">
                             <div
                               v-for="skill in category.skills"
                               :key="`${selectedTrainingTrackingAssignment.id}-${category.id}-${skill.id}`"
                               class="business-assign-templates__tracking-skill"
-                              :class="{ 'is-complete': skill.completed }"
+                              :class="{
+                                'is-complete': skill.completed,
+                                'is-selected': isTrainingTrackingSkillSelected(selectedTrainingTrackingAssignment.id, category.id, skill.id),
+                              }"
+                              @click="toggleTrainingTrackingSkillSelection(selectedTrainingTrackingAssignment.id, category.id, skill.id)"
                             >
                               <div class="business-assign-templates__tracking-skill-check">
                                 <input
                                   type="checkbox"
                                   :checked="skill.completed"
                                   :disabled="!canEditTrainingAssignments || isTrainingTrackingSkillSaving(selectedTrainingTrackingAssignment.id, category.id, skill.id)"
+                                  @click.stop
                                   @change="toggleTrainingAssignmentSkillCompletion(
                                     selectedTrainingTrackingAssignment.id,
                                     category.id,
                                     skill.id,
                                     $event.target.checked,
-                                  )"
-                                />
-                              </div>
-                              <div class="business-assign-templates__tracking-skill-copy">
-                                <strong>{{ skill.name || 'Untitled skill' }}</strong>
-                                <span v-if="skill.description">{{ skill.description }}</span>
-                                <small>
-                                  {{
-                                    isTrainingTrackingSkillSaving(selectedTrainingTrackingAssignment.id, category.id, skill.id)
-                                      ? 'Saving...'
-                                      : skill.completed
-                                        ? skill.grade
-                                          ? `Completed - Rated ${skill.grade}/5`
-                                          : 'Completed - Waiting for grade'
-                                        : 'Pending'
-                                  }}
-                                </small>
-                                <div v-if="skill.completed" class="business-assign-templates__tracking-grade">
-                                  <span class="business-assign-templates__tracking-grade-label">Skill Grade</span>
-                                  <div class="business-assign-templates__tracking-grade-scale">
-                                    <label
-                                      v-for="gradeOption in TRAINING_TRACKING_GRADE_SCALE"
-                                      :key="`${selectedTrainingTrackingAssignment.id}-${category.id}-${skill.id}-${gradeOption}`"
-                                      class="business-assign-templates__tracking-grade-option"
-                                    >
-                                      <input
-                                        type="radio"
-                                        :name="`training-grade-${selectedTrainingTrackingAssignment.id}-${category.id}-${skill.id}`"
-                                        :checked="skill.grade === gradeOption"
-                                        :disabled="!canEditTrainingAssignments || isTrainingTrackingSkillSaving(selectedTrainingTrackingAssignment.id, category.id, skill.id)"
-                                        @change="setTrainingAssignmentSkillGrade(
-                                          selectedTrainingTrackingAssignment.id,
-                                          category.id,
-                                          skill.id,
-                                          gradeOption,
-                                        )"
-                                      />
-                                      <span>{{ gradeOption }}</span>
-                                    </label>
-                                  </div>
-                                  <small class="business-assign-templates__tracking-grade-note">
+                                    )"
+                                  />
+                                </div>
+                                <div class="business-assign-templates__tracking-skill-copy">
+                                  <strong>{{ skill.name || 'Untitled skill' }}</strong>
+                                  <span v-if="skill.description">{{ skill.description }}</span>
+                                  <small>
                                     {{
-                                      skill.grade
-                                        ? `${skill.grade}/5 selected for this skill.`
-                                        : 'Choose a score from 1 to 5 after checking this skill.'
+                                      isTrainingTrackingSkillSaving(selectedTrainingTrackingAssignment.id, category.id, skill.id)
+                                        ? 'Saving...'
+                                        : skill.completed
+                                          ? skill.grade
+                                            ? `Completed - Rated ${skill.grade}/5`
+                                            : 'Completed - Waiting for grade'
+                                          : 'Pending'
                                     }}
                                   </small>
+                                  <div
+                                    v-if="isTrainingTrackingSkillSelected(selectedTrainingTrackingAssignment.id, category.id, skill.id)"
+                                    class="business-assign-templates__tracking-grade"
+                                    @click.stop
+                                  >
+                                    <span class="business-assign-templates__tracking-grade-label">Skill Grade</span>
+                                    <div class="business-assign-templates__tracking-grade-scale">
+                                      <label
+                                        v-for="gradeOption in TRAINING_TRACKING_GRADE_SCALE"
+                                        :key="`${selectedTrainingTrackingAssignment.id}-${category.id}-${skill.id}-${gradeOption}`"
+                                        class="business-assign-templates__tracking-grade-option"
+                                        @click.stop
+                                      >
+                                        <input
+                                          type="radio"
+                                          :name="`training-grade-${selectedTrainingTrackingAssignment.id}-${category.id}-${skill.id}`"
+                                          :checked="skill.grade === gradeOption"
+                                          :disabled="!canEditTrainingAssignments || isTrainingTrackingSkillSaving(selectedTrainingTrackingAssignment.id, category.id, skill.id)"
+                                          @click.stop
+                                          @change="setTrainingAssignmentSkillGrade(
+                                            selectedTrainingTrackingAssignment.id,
+                                            category.id,
+                                            skill.id,
+                                            gradeOption,
+                                          )"
+                                        />
+                                        <span>{{ gradeOption }}</span>
+                                      </label>
+                                    </div>
+                                    <small class="business-assign-templates__tracking-grade-note">
+                                      {{
+                                        skill.grade
+                                          ? `${skill.grade}/5 selected for this skill.`
+                                          : 'Choose a score from 1 to 5 for this skill.'
+                                      }}
+                                    </small>
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                          <div v-else class="business-assign-templates__empty business-assign-templates__empty--compact">
-                            <strong>No skills listed in this category yet</strong>
-                            <p>Edit the saved training template if you want to add more skills for future assignments.</p>
-                          </div>
+                            <div v-else class="business-assign-templates__empty business-assign-templates__empty--compact">
+                              <strong>No skills listed in this category yet</strong>
+                              <p>Edit the saved training template if you want to add more skills for future assignments.</p>
+                            </div>
 
-                          <div
-                            v-if="category.canAddRemark"
-                            class="business-assign-templates__tracking-remark"
-                          >
-                            <div class="business-assign-templates__tracking-remark-head">
-                              <div>
-                                <strong>Category Remark</strong>
-                                <span>
-                                  {{
-                                    category.isFullyGraded
-                                      ? 'All skills are checked and graded. Add your final remark for this category.'
-                                      : 'This remark is unlocked because all skills are checked. Finish grading each skill, then save your final category remark.'
-                                  }}
+                            <div
+                              v-if="category.canAddRemark"
+                              class="business-assign-templates__tracking-remark"
+                            >
+                              <div class="business-assign-templates__tracking-remark-head">
+                                <div>
+                                  <strong>Category Remark</strong>
+                                  <span>
+                                    {{
+                                      category.isFullyGraded
+                                        ? 'All skills are checked and graded. Add your final remark for this category.'
+                                        : 'This remark is unlocked because all skills are checked. Finish grading each skill, then save your final category remark.'
+                                    }}
+                                  </span>
+                                </div>
+                                <span
+                                  v-if="category.remarkedAt"
+                                  class="business-assign-templates__tracking-remark-time"
+                                >
+                                  Saved {{ formatBusinessInterviewDateTime(category.remarkedAt) }}
                                 </span>
                               </div>
-                              <span
-                                v-if="category.remarkedAt"
-                                class="business-assign-templates__tracking-remark-time"
-                              >
-                                Saved {{ formatBusinessInterviewDateTime(category.remarkedAt) }}
-                              </span>
-                            </div>
-                            <textarea
-                              class="business-assign-templates__tracking-remark-input"
-                              rows="4"
-                              :disabled="!canEditTrainingAssignments || isTrainingTrackingCategorySaving(selectedTrainingTrackingAssignment.id, category.id)"
-                              :value="getTrainingTrackingCategoryRemarkDraft(selectedTrainingTrackingAssignment.id, category)"
-                              placeholder="Add your training remark for this category..."
-                              @input="setTrainingTrackingCategoryRemarkDraft(selectedTrainingTrackingAssignment.id, category.id, $event.target.value)"
-                            />
-                            <div class="business-assign-templates__tracking-remark-actions">
-                              <small>
-                                {{
-                                  isTrainingTrackingCategorySaving(selectedTrainingTrackingAssignment.id, category.id)
-                                    ? 'Saving category remark...'
-                                    : category.hasRemark
-                                      ? 'A saved remark is required before you can complete the full training record.'
-                                      : 'Save a remark for this category after reviewing every skill.'
-                                }}
-                              </small>
-                              <button
-                                type="button"
-                                class="business-assign-templates__action"
+                              <textarea
+                                class="business-assign-templates__tracking-remark-input"
+                                rows="4"
                                 :disabled="!canEditTrainingAssignments || isTrainingTrackingCategorySaving(selectedTrainingTrackingAssignment.id, category.id)"
-                                @click="saveTrainingTrackingCategoryRemark(selectedTrainingTrackingAssignment.id, category.id)"
-                              >
-                                Save Remark
-                              </button>
+                                :value="getTrainingTrackingCategoryRemarkDraft(selectedTrainingTrackingAssignment.id, category)"
+                                placeholder="Add your training remark for this category..."
+                                @input="setTrainingTrackingCategoryRemarkDraft(selectedTrainingTrackingAssignment.id, category.id, $event.target.value)"
+                              />
+                              <div class="business-assign-templates__tracking-remark-actions">
+                                <small>
+                                  {{
+                                    isTrainingTrackingCategorySaving(selectedTrainingTrackingAssignment.id, category.id)
+                                      ? 'Saving category remark...'
+                                      : category.hasRemark
+                                        ? 'A saved remark is required before you can complete the full training record.'
+                                        : 'Save a remark for this category after reviewing every skill.'
+                                  }}
+                                </small>
+                                <button
+                                  type="button"
+                                  class="business-assign-templates__action"
+                                  :disabled="!canEditTrainingAssignments || isTrainingTrackingCategorySaving(selectedTrainingTrackingAssignment.id, category.id)"
+                                  @click="saveTrainingTrackingCategoryRemark(selectedTrainingTrackingAssignment.id, category.id)"
+                                >
+                                  Save Remark
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                          <div
-                            v-else
-                            class="business-assign-templates__tracking-remark business-assign-templates__tracking-remark--locked"
-                          >
-                            <strong>Category remark locked</strong>
-                            <p>This remark field will appear only after all skills in this category are checked as completed.</p>
-                          </div>
+                            <div
+                              v-else
+                              class="business-assign-templates__tracking-remark business-assign-templates__tracking-remark--locked"
+                            >
+                              <strong>Category remark locked</strong>
+                              <p>This remark field will appear only after all skills in this category are checked as completed.</p>
+                            </div>
+                          </template>
                         </article>
                       </div>
 

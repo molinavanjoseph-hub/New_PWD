@@ -121,14 +121,16 @@ const activeContract = computed(() =>
 )
 
 const canApplicantSign = computed(() => normalizeContractStatus(activeContract.value?.status) === 'sent')
-const activeSubmitState = computed(() =>
-  String(props.activeSubmittingContractId || '').trim()
-  && String(activeContract.value?.id || '').trim() === String(props.activeSubmittingContractId || '').trim(),
-)
-const activeProviderState = computed(() =>
-  String(props.activeProviderContractId || '').trim()
-  && String(activeContract.value?.id || '').trim() === String(props.activeProviderContractId || '').trim(),
-)
+const activeSubmitState = computed(() => {
+  const submittingId = String(props.activeSubmittingContractId || '').trim()
+  const activeId = String(activeContract.value?.id || '').trim()
+  return Boolean(submittingId) && activeId === submittingId
+})
+const activeProviderState = computed(() => {
+  const providerId = String(props.activeProviderContractId || '').trim()
+  const activeId = String(activeContract.value?.id || '').trim()
+  return Boolean(providerId) && activeId === providerId
+})
 
 const contractStats = computed(() => {
   const records = Array.isArray(props.contracts) ? props.contracts : []

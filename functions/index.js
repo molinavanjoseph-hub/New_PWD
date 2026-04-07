@@ -39,6 +39,7 @@ const DELETED_USER_HISTORY_COLLECTION = 'deleted_user_history'
 const REGISTRATION_OTP_COLLECTION = 'employer_registration'
 const JOBS_COLLECTION = 'jobs'
 const APPLY_JOBS_COLLECTION = 'apply_jobs'
+const CONTRACT_SIGNING_COLLECTION = 'contract_signing'
 const BUSINESS_INTERVIEW_SCHEDULES_COLLECTION = 'business_interview_schedules'
 const BUSINESS_APPLICANT_SCORE_COLLECTION = 'applicant_score_assessment'
 const BUSINESS_ASSESSMENT_TEMPLATE_COLLECTION = 'business_assessment_templates'
@@ -86,6 +87,16 @@ const chunkValues = (values = [], size = 10) => {
   }
 
   return chunks
+}
+const stripUndefined = (value) => {
+  if (Array.isArray(value)) return value.map(stripUndefined)
+  if (!value || typeof value !== 'object') return value
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, stripUndefined(entry)]),
+  )
 }
 
 const getRoleFromValue = (value) => normalizeRole(value)
@@ -144,6 +155,11 @@ const assertAdminRequest = async (request) => {
 
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 const isValidHttpUrl = (value) => /^https?:\/\//i.test(text(value))
+const isUuid = (value) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text(value))
+const isPemPrivateKey = (value) => {
+  const normalizedValue = String(value || '').replace(/\\n/g, '\n').trim()
+  return /-----BEGIN (?:RSA )?PRIVATE KEY-----[\s\S]+-----END (?:RSA )?PRIVATE KEY-----/i.test(normalizedValue)
+}
 const otpTtlMs = OTP_EXPIRY_MINUTES * 60 * 1000
 const verifiedRegistrationTtlMs = VERIFIED_REGISTRATION_TTL_MINUTES * 60 * 1000
 const nowIso = () => new Date().toISOString()
@@ -661,6 +677,542 @@ const callPayMongoApi = async (path, options = {}) => {
   }
 
   return payload
+}
+
+const getDocuSignConfig = () => {
+  const provider = text(process.env.DOCUSIGN_PROVIDER || 'docusign').toLowerCase()
+  const integrationKey = text(process.env.DOCUSIGN_INTEGRATION_KEY)
+  const userId = text(process.env.DOCUSIGN_USER_ID)
+  const accountId = text(process.env.DOCUSIGN_ACCOUNT_ID)
+  const oauthBaseUrl = text(process.env.DOCUSIGN_OAUTH_BASE_URL || 'account-d.docusign.com')
+  const restBaseUrl = text(process.env.DOCUSIGN_REST_BASE_URL || 'https://demo.docusign.net/restapi').replace(/\/+$/, '')
+  const privateKey = text(process.env.DOCUSIGN_PRIVATE_KEY).replace(/\\n/g, '\n')
+  const defaultReturnUrl = text(process.env.DOCUSIGN_RETURN_URL)
+
+  if (!integrationKey || !userId || !accountId || !privateKey) {
+    throw new HttpsError(
+      'failed-precondition',
+      'DocuSign is not configured yet. Add DOCUSIGN_INTEGRATION_KEY, DOCUSIGN_USER_ID, DOCUSIGN_ACCOUNT_ID, and DOCUSIGN_PRIVATE_KEY to Firebase Functions.',
+    )
+  }
+
+  if (!isUuid(integrationKey)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'DOCUSIGN_INTEGRATION_KEY must be the DocuSign Integration Key / Client ID GUID from Apps and Keys.',
+    )
+  }
+
+  if (!isUuid(userId)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'DOCUSIGN_USER_ID must be the User ID GUID from Apps and Keys > My Account Information.',
+    )
+  }
+
+  if (!isUuid(accountId)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'DOCUSIGN_ACCOUNT_ID must be the API Account ID GUID from Apps and Keys > My Account Information.',
+    )
+  }
+
+  if (isUuid(privateKey)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'DOCUSIGN_PRIVATE_KEY looks like a DocuSign key ID, not the RSA private key. In Apps and Keys, open your app, go to Authentication, add an RSA keypair, and paste the full PEM including BEGIN and END PRIVATE KEY lines.',
+    )
+  }
+
+  if (!isPemPrivateKey(privateKey)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'DOCUSIGN_PRIVATE_KEY must be the full RSA private key PEM in functions/.env, including the BEGIN and END PRIVATE KEY lines.',
+    )
+  }
+
+  return {
+    provider,
+    integrationKey,
+    userId,
+    accountId,
+    oauthBaseUrl,
+    restBaseUrl,
+    privateKey,
+    defaultReturnUrl,
+  }
+}
+
+const base64UrlEncode = (value) =>
+  Buffer.from(typeof value === 'string' ? value : JSON.stringify(value))
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+
+const createDocuSignJwtAssertion = (config) => {
+  const issuedAt = Math.floor(Date.now() / 1000)
+  const expiresAt = issuedAt + 3600
+  const encodedHeader = base64UrlEncode({
+    alg: 'RS256',
+    typ: 'JWT',
+  })
+  const encodedPayload = base64UrlEncode({
+    iss: config.integrationKey,
+    sub: config.userId,
+    aud: config.oauthBaseUrl,
+    iat: issuedAt,
+    exp: expiresAt,
+    scope: 'signature impersonation',
+  })
+  const signingInput = `${encodedHeader}.${encodedPayload}`
+  const signature = crypto
+    .sign('RSA-SHA256', Buffer.from(signingInput), config.privateKey)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+
+  return `${signingInput}.${signature}`
+}
+
+const requestDocuSignAccessToken = async (config) => {
+  const response = await fetch(`https://${config.oauthBaseUrl}/oauth/token`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: createDocuSignJwtAssertion(config),
+    }).toString(),
+  })
+
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok || !text(payload?.access_token)) {
+    throw new HttpsError(
+      response.status === 401 ? 'permission-denied' : 'internal',
+      text(payload?.error_description || payload?.error || 'Unable to authenticate with DocuSign.'),
+    )
+  }
+
+  return text(payload.access_token)
+}
+
+const callDocuSignApi = async (config, path, options = {}) => {
+  const accessToken = await requestDocuSignAccessToken(config)
+  const response = await fetch(`${config.restBaseUrl}${path}`, {
+    method: options.method || 'GET',
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      accept: 'application/json',
+      ...(options.body ? { 'content-type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+  })
+  const payload = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    const errorMessage = text(
+      payload?.message
+      || payload?.error_description
+      || payload?.error
+      || payload?.details
+      || 'DocuSign request failed.',
+    )
+
+    throw new HttpsError(
+      response.status === 401 || response.status === 403 ? 'permission-denied' : 'internal',
+      errorMessage,
+    )
+  }
+
+  return payload
+}
+
+const buildDocuSignContractHtml = (contract = {}) => {
+  const contractTitle = escapeHtml(contract.contract_title || contract.contractTitle || 'Employment Contract')
+  const applicantName = escapeHtml(contract.applicant_name || contract.applicantName || 'Applicant')
+  const applicantEmail = escapeHtml(contract.applicant_email || contract.applicantEmail || '')
+  const businessName = escapeHtml(contract.business_name || contract.businessName || contract.workspace_owner_name || 'Business')
+  const businessEmail = escapeHtml(contract.workspace_owner_email || contract.workspaceOwnerEmail || '')
+  const jobTitle = escapeHtml(contract.job_title || contract.jobTitle || 'Applied Role')
+  const salaryOffer = escapeHtml(contract.salary_offer || contract.salaryOffer || 'To be finalized by the business')
+  const employmentType = escapeHtml(contract.employment_type || contract.employmentType || 'Full-time')
+  const startDate = escapeHtml(contract.start_date || contract.startDate || 'To be finalized')
+  const notes = escapeHtml(contract.notes || '')
+  const contractBody = escapeHtml(contract.contract_body || contract.contractBody || '')
+    .replace(/\r?\n/g, '<br />')
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${contractTitle}</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #223126; padding: 28px; line-height: 1.55; }
+      h1, h2, h3 { margin: 0 0 12px; }
+      .meta { margin: 18px 0; padding: 16px; border: 1px solid #d8e6dc; border-radius: 12px; background: #f8fcf9; }
+      .meta p { margin: 4px 0; }
+      .copy { margin-top: 22px; white-space: normal; }
+      .signatures { margin-top: 34px; display: grid; gap: 18px; }
+      .signature-box { border-top: 1px solid #99b7a3; padding-top: 12px; min-height: 84px; }
+      .signature-anchor { color: transparent; user-select: none; }
+    </style>
+  </head>
+  <body>
+    <h1>${contractTitle}</h1>
+    <p>This contract is prepared between <strong>${businessName}</strong> and <strong>${applicantName}</strong>.</p>
+
+    <section class="meta">
+      <p><strong>Applicant:</strong> ${applicantName}${applicantEmail ? ` (${applicantEmail})` : ''}</p>
+      <p><strong>Business:</strong> ${businessName}${businessEmail ? ` (${businessEmail})` : ''}</p>
+      <p><strong>Role:</strong> ${jobTitle}</p>
+      <p><strong>Salary Offer:</strong> ${salaryOffer}</p>
+      <p><strong>Employment Type:</strong> ${employmentType}</p>
+      <p><strong>Start Date:</strong> ${startDate}</p>
+    </section>
+
+    <section class="copy">
+      <h3>Agreement</h3>
+      <p>${contractBody || 'The business and applicant agree to the employment terms stated in this contract.'}</p>
+    </section>
+
+    ${notes ? `<section class="copy"><h3>Notes</h3><p>${notes.replace(/\r?\n/g, '<br />')}</p></section>` : ''}
+
+    <section class="signatures">
+      <div class="signature-box">
+        <strong>Applicant Signature</strong>
+        <p>${applicantName}</p>
+        <span class="signature-anchor">/sig-applicant/</span>
+      </div>
+      <div class="signature-box">
+        <strong>Business Signature</strong>
+        <p>${businessName}</p>
+        <span class="signature-anchor">/sig-business/</span>
+      </div>
+    </section>
+  </body>
+</html>`
+}
+
+const getContractSigningDocRef = (contractId) =>
+  db.collection(CONTRACT_SIGNING_COLLECTION).doc(contractId)
+
+const loadContractSigningRecord = async (contractId) => {
+  const normalizedContractId = text(contractId)
+  if (!normalizedContractId) {
+    throw new HttpsError('invalid-argument', 'A valid contract ID is required.')
+  }
+
+  const docRef = getContractSigningDocRef(normalizedContractId)
+  const snapshot = await docRef.get()
+  if (!snapshot.exists) {
+    throw new HttpsError('not-found', 'Contract signing record was not found.')
+  }
+
+  return {
+    id: snapshot.id,
+    ref: docRef,
+    data: snapshot.data() || {},
+  }
+}
+
+const assertContractParticipantAccess = (request, contractRecord, actorRole) => {
+  const requesterUid = assertSignedInRequest(request, 'Sign in before opening the contract signing session.')
+  const requesterEmail = normalizeEmail(request?.auth?.token?.email)
+  const normalizedActorRole = text(actorRole).toLowerCase()
+  const contractData = contractRecord?.data || {}
+
+  const applicantId = text(contractData.applicant_id || contractData.applicantId)
+  const applicantEmail = normalizeEmail(contractData.applicant_email || contractData.applicantEmail)
+  const workspaceOwnerId = text(contractData.workspace_owner_id || contractData.workspaceOwnerId)
+  const workspaceOwnerEmail = normalizeEmail(contractData.workspace_owner_email || contractData.workspaceOwnerEmail)
+
+  const isApplicant =
+    (applicantId && requesterUid === applicantId)
+    || (applicantEmail && requesterEmail === applicantEmail)
+  const isBusiness =
+    (workspaceOwnerId && requesterUid === workspaceOwnerId)
+    || (workspaceOwnerEmail && requesterEmail === workspaceOwnerEmail)
+
+  if (normalizedActorRole === 'applicant' && !isApplicant) {
+    throw new HttpsError('permission-denied', 'Only the applicant can open this signing session.')
+  }
+
+  if (normalizedActorRole === 'business' && !isBusiness) {
+    throw new HttpsError('permission-denied', 'Only the business can open this signing session.')
+  }
+
+  if (!isApplicant && !isBusiness) {
+    throw new HttpsError('permission-denied', 'You do not have access to this contract signing record.')
+  }
+
+  return {
+    requesterUid,
+    requesterEmail,
+    actorRole: normalizedActorRole || (isBusiness ? 'business' : 'applicant'),
+  }
+}
+
+const buildDocuSignEnvelopePayload = (contractData = {}) => {
+  const applicantEmail = normalizeEmail(contractData.applicant_email || contractData.applicantEmail)
+  const applicantName = text(contractData.applicant_name || contractData.applicantName)
+  const businessEmail = normalizeEmail(contractData.workspace_owner_email || contractData.workspaceOwnerEmail)
+  const businessName = text(contractData.workspace_owner_name || contractData.workspaceOwnerName || contractData.business_name || contractData.businessName)
+
+  if (!isValidEmail(applicantEmail) || !isValidEmail(businessEmail)) {
+    throw new HttpsError('invalid-argument', 'Both the applicant and business must have valid email addresses for DocuSign.')
+  }
+
+  const applicantClientUserId = `applicant:${text(contractData.applicant_id || contractData.applicantId || applicantEmail)}`
+  const businessClientUserId = `business:${text(contractData.workspace_owner_id || contractData.workspaceOwnerId || businessEmail)}`
+  const htmlDocument = buildDocuSignContractHtml(contractData)
+
+  return {
+    applicantClientUserId,
+    businessClientUserId,
+    body: {
+      emailSubject: `Contract for ${text(contractData.job_title || contractData.jobTitle || 'your application') || 'your application'}`,
+      documents: [
+        {
+          documentBase64: Buffer.from(htmlDocument).toString('base64'),
+          name: `${text(contractData.contract_title || contractData.contractTitle || 'employment-contract') || 'employment-contract'}.html`,
+          fileExtension: 'html',
+          documentId: '1',
+        },
+      ],
+      recipients: {
+        signers: [
+          {
+            email: applicantEmail,
+            name: applicantName || 'Applicant',
+            recipientId: '1',
+            routingOrder: '1',
+            clientUserId: applicantClientUserId,
+            embeddedRecipientStartURL: 'SIGN_AT_DOCUSIGN',
+            tabs: {
+              signHereTabs: [
+                {
+                  anchorString: '/sig-applicant/',
+                  anchorUnits: 'pixels',
+                  anchorXOffset: '0',
+                  anchorYOffset: '0',
+                },
+              ],
+            },
+          },
+          {
+            email: businessEmail,
+            name: businessName || 'Business',
+            recipientId: '2',
+            routingOrder: '2',
+            clientUserId: businessClientUserId,
+            embeddedRecipientStartURL: 'SIGN_AT_DOCUSIGN',
+            tabs: {
+              signHereTabs: [
+                {
+                  anchorString: '/sig-business/',
+                  anchorUnits: 'pixels',
+                  anchorXOffset: '0',
+                  anchorYOffset: '0',
+                },
+              ],
+            },
+          },
+        ],
+      },
+      status: 'sent',
+    },
+  }
+}
+
+const createDocuSignEnvelope = async (config, contractData = {}) => {
+  const payload = buildDocuSignEnvelopePayload(contractData)
+  const response = await callDocuSignApi(
+    config,
+    `/v2.1/accounts/${encodeURIComponent(config.accountId)}/envelopes`,
+    {
+      method: 'POST',
+      body: payload.body,
+    },
+  )
+
+  return {
+    envelopeId: text(response?.envelopeId || response?.envelope_id),
+    applicantClientUserId: payload.applicantClientUserId,
+    businessClientUserId: payload.businessClientUserId,
+  }
+}
+
+const createDocuSignRecipientView = async (config, { contractData, envelopeId, actorRole, returnUrl }) => {
+  const normalizedActorRole = text(actorRole).toLowerCase() === 'business' ? 'business' : 'applicant'
+  const recipientId = normalizedActorRole === 'business' ? '2' : '1'
+  const clientUserId = normalizedActorRole === 'business'
+    ? `business:${text(contractData.workspace_owner_id || contractData.workspaceOwnerId || contractData.workspace_owner_email || contractData.workspaceOwnerEmail)}`
+    : `applicant:${text(contractData.applicant_id || contractData.applicantId || contractData.applicant_email || contractData.applicantEmail)}`
+  const signerEmail = normalizeEmail(
+    normalizedActorRole === 'business'
+      ? (contractData.workspace_owner_email || contractData.workspaceOwnerEmail)
+      : (contractData.applicant_email || contractData.applicantEmail),
+  )
+  const signerName = text(
+    normalizedActorRole === 'business'
+      ? (contractData.workspace_owner_name || contractData.workspaceOwnerName || contractData.business_name || contractData.businessName)
+      : (contractData.applicant_name || contractData.applicantName),
+  )
+  const resolvedReturnUrl = text(returnUrl || config.defaultReturnUrl)
+
+  if (!isValidHttpUrl(resolvedReturnUrl)) {
+    throw new HttpsError('invalid-argument', 'A valid return URL is required to open the embedded signing page.')
+  }
+
+  const response = await callDocuSignApi(
+    config,
+    `/v2.1/accounts/${encodeURIComponent(config.accountId)}/envelopes/${encodeURIComponent(envelopeId)}/views/recipient`,
+    {
+      method: 'POST',
+      body: {
+        authenticationMethod: 'none',
+        clientUserId,
+        recipientId,
+        returnUrl: resolvedReturnUrl,
+        userName: signerName || (normalizedActorRole === 'business' ? 'Business' : 'Applicant'),
+        email: signerEmail,
+      },
+    },
+  )
+
+  return text(response?.url)
+}
+
+const syncDocuSignEnvelopeBackToContract = async (config, contractRecord) => {
+  const contractData = contractRecord?.data || {}
+  const envelopeId = text(contractData.provider_envelope_id || contractData.providerEnvelopeId)
+
+  if (!envelopeId) {
+    return {
+      contractStatus: text(contractData.status || 'sent') || 'sent',
+      providerEnvelopeId: '',
+    }
+  }
+
+  const [envelopeDetails, recipientsPayload] = await Promise.all([
+    callDocuSignApi(
+      config,
+      `/v2.1/accounts/${encodeURIComponent(config.accountId)}/envelopes/${encodeURIComponent(envelopeId)}`,
+    ),
+    callDocuSignApi(
+      config,
+      `/v2.1/accounts/${encodeURIComponent(config.accountId)}/envelopes/${encodeURIComponent(envelopeId)}/recipients`,
+    ),
+  ])
+
+  const recipients = Array.isArray(recipientsPayload?.signers) ? recipientsPayload.signers : []
+  const applicantEmail = normalizeEmail(contractData.applicant_email || contractData.applicantEmail)
+  const businessEmail = normalizeEmail(contractData.workspace_owner_email || contractData.workspaceOwnerEmail)
+  const applicantRecipient = recipients.find((entry) => normalizeEmail(entry?.email) === applicantEmail) || null
+  const businessRecipient = recipients.find((entry) => normalizeEmail(entry?.email) === businessEmail) || null
+  const applicantCompletedAt = text(applicantRecipient?.completedDateTime || applicantRecipient?.completedDateTimeUTC)
+  const businessCompletedAt = text(businessRecipient?.completedDateTime || businessRecipient?.completedDateTimeUTC)
+  const providerStatus = text(envelopeDetails?.status).toLowerCase()
+  const providerApplicantStatus = text(applicantRecipient?.status).toLowerCase()
+  const providerBusinessStatus = text(businessRecipient?.status).toLowerCase()
+  const contractStatus = providerBusinessStatus === 'completed' || providerStatus === 'completed'
+    ? 'completed'
+    : providerApplicantStatus === 'completed'
+      ? 'applicant_signed'
+      : text(contractData.status || 'sent') || 'sent'
+  const syncTime = nowIso()
+
+  await contractRecord.ref.set(stripUndefined({
+    signature_provider: config.provider,
+    signature_mode: 'embedded',
+    provider_envelope_id: envelopeId,
+    provider_status: providerStatus,
+    provider_applicant_status: providerApplicantStatus,
+    provider_business_status: providerBusinessStatus,
+    provider_last_synced_at: syncTime,
+    status: contractStatus,
+    applicant_signed_at: contractStatus === 'applicant_signed' || contractStatus === 'completed'
+      ? (text(contractData.applicant_signed_at || contractData.applicantSignedAt) || applicantCompletedAt || nowIso())
+      : (text(contractData.applicant_signed_at || contractData.applicantSignedAt) || undefined),
+    business_signed_at: contractStatus === 'completed'
+      ? (text(contractData.business_signed_at || contractData.businessSignedAt) || businessCompletedAt || nowIso())
+      : (text(contractData.business_signed_at || contractData.businessSignedAt) || undefined),
+    completed_at: contractStatus === 'completed'
+      ? (text(contractData.completed_at || contractData.completedAt) || businessCompletedAt || nowIso())
+      : undefined,
+    updated_at: syncTime,
+    updated_at_server: admin.firestore.FieldValue.serverTimestamp(),
+  }), { merge: true })
+
+  return {
+    contractStatus,
+    providerEnvelopeId: envelopeId,
+    providerStatus,
+    providerApplicantStatus,
+    providerBusinessStatus,
+    applicantSignedAt: applicantCompletedAt,
+    businessSignedAt: businessCompletedAt,
+    completedAt: contractStatus === 'completed' ? (businessCompletedAt || applicantCompletedAt || nowIso()) : '',
+  }
+}
+
+const createContractSigningProviderSessionHandler = async (rawData, request) => {
+  const contractRecord = await loadContractSigningRecord(rawData?.contractId)
+  const access = assertContractParticipantAccess(request, contractRecord, rawData?.actorRole)
+  const config = getDocuSignConfig()
+  const contractData = contractRecord.data || {}
+  let envelopeId = text(contractData.provider_envelope_id || contractData.providerEnvelopeId)
+
+  if (!envelopeId) {
+    const createdEnvelope = await createDocuSignEnvelope(config, contractData)
+    envelopeId = createdEnvelope.envelopeId
+
+    await contractRecord.ref.set({
+      signature_provider: config.provider,
+      signature_mode: 'embedded',
+      provider_envelope_id: envelopeId,
+      provider_status: 'sent',
+      updated_at: nowIso(),
+      updated_at_server: admin.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true })
+  }
+
+  const signingUrl = await createDocuSignRecipientView(config, {
+    contractData: {
+      ...contractData,
+      provider_envelope_id: envelopeId,
+    },
+    envelopeId,
+    actorRole: access.actorRole,
+    returnUrl: rawData?.returnUrl,
+  })
+
+  await contractRecord.ref.set({
+    provider_last_synced_at: nowIso(),
+    updated_at: nowIso(),
+    updated_at_server: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true })
+
+  return {
+    provider: config.provider,
+    mode: 'embedded',
+    actorRole: access.actorRole,
+    contractId: contractRecord.id,
+    envelopeId,
+    signingUrl,
+  }
+}
+
+const syncContractSigningProviderStatusHandler = async (rawData, request) => {
+  const contractRecord = await loadContractSigningRecord(rawData?.contractId)
+  assertContractParticipantAccess(request, contractRecord)
+  const config = getDocuSignConfig()
+  return syncDocuSignEnvelopeBackToContract(config, contractRecord)
 }
 
 const extractSendGridErrorMessage = (error) => {
@@ -2662,29 +3214,35 @@ exports.updateDeletedUserHistoryArchiveState = onCall(async (request) =>
 exports.deleteDeletedUserHistoryRecord = onCall(async (request) =>
   deleteDeletedUserHistoryRecordHandler(request.data, request))
 
-exports.publishBusinessJobPost = onCall(async (request) =>
+exports.publishBusinessJobPost = onCall(publicCallableOptions, async (request) =>
   publishBusinessJobPostHandler(request.data, request))
 
-exports.updateBusinessJobPost = onCall(async (request) =>
+exports.updateBusinessJobPost = onCall(publicCallableOptions, async (request) =>
   updateBusinessJobPostHandler(request.data, request))
 
-exports.deleteBusinessJobPost = onCall(async (request) =>
+exports.deleteBusinessJobPost = onCall(publicCallableOptions, async (request) =>
   deleteBusinessJobPostHandler(request.data, request))
 
-exports.createBusinessWorkspaceUser = onCall(async (request) =>
+exports.createBusinessWorkspaceUser = onCall(publicCallableOptions, async (request) =>
   createBusinessWorkspaceUserHandler(request.data, request))
 
-exports.saveBusinessWorkspacePermissions = onCall(async (request) =>
+exports.saveBusinessWorkspacePermissions = onCall(publicCallableOptions, async (request) =>
   saveBusinessWorkspacePermissionsHandler(request.data, request))
 
-exports.syncBusinessWorkspaceUserDirectory = onCall(async (request) =>
+exports.syncBusinessWorkspaceUserDirectory = onCall(publicCallableOptions, async (request) =>
   syncBusinessWorkspaceUserDirectoryHandler(request.data, request))
 
-exports.createBusinessPayMongoCheckoutSession = onCall(async (request) =>
+exports.createBusinessPayMongoCheckoutSession = onCall(publicCallableOptions, async (request) =>
   createBusinessPayMongoCheckoutSessionHandler(request.data, request))
 
-exports.verifyBusinessPayMongoCheckoutSession = onCall(async (request) =>
+exports.verifyBusinessPayMongoCheckoutSession = onCall(publicCallableOptions, async (request) =>
   verifyBusinessPayMongoCheckoutSessionHandler(request.data, request))
+
+exports.createContractSigningProviderSession = onCall(publicCallableOptions, async (request) =>
+  createContractSigningProviderSessionHandler(request.data, request))
+
+exports.syncContractSigningProviderStatus = onCall(publicCallableOptions, async (request) =>
+  syncContractSigningProviderStatusHandler(request.data, request))
 
 exports.sendEmployerRegistrationOtpHttp = onRequest(publicHttpOptions, async (request, response) => {
   if (request.method !== 'POST') {

@@ -5,6 +5,7 @@
 import { computed, defineAsyncComponent, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { httpsCallable } from 'firebase/functions'
 import { useRoute, useRouter } from 'vue-router'
+import AppToast from '@/components/AppToast.vue'
 import BModals from '@/modules/Employer/Business/modals.vue'
 import BIssueOfferModal from '@/modules/Employer/Business/business_issue_offer.vue'
 import BNavbar from '@/modules/Employer/Business/business_Navbar.vue'
@@ -22,6 +23,7 @@ import {
   rejectApplicantManagementApplicationProcess,
   rejectBusinessInterviewRescheduleRequestProcess,
   removeAssignedAssessmentFromApplicantProcess,
+  removeAssignedTrainingTemplateFromMemberProcess,
   saveTrainingTrackingCategoryRemarkProcess,
   setTrainingAssignmentSkillGradeProcess,
   syncAssignedApplicantAssessmentScoresProcess,
@@ -72,6 +74,7 @@ import {
   normalizePlanRecord,
 } from '@/lib/business_plan_access'
 import {
+  deleteBusinessApplicantScoreRecord,
   subscribeToBusinessApplicantScores,
 } from '@/lib/business_applicant_scores'
 import {
@@ -79,6 +82,13 @@ import {
   saveBusinessPaymentHistoryEntry,
   subscribeToBusinessPaymentHistory,
 } from '@/lib/business_payment_history'
+import {
+  createContractSigningProviderSession,
+  saveBusinessContractRecord,
+  signBusinessContractRecord,
+  subscribeToBusinessContracts,
+  syncContractSigningProviderStatus,
+} from '@/lib/contract_signing'
 import {
   createBusinessJobPost,
   deleteBusinessJobPost,
@@ -90,7 +100,9 @@ import { subscribeToBusinessJobApplications, updateApplicantJobApplicationStatus
 import { saveBusinessInterviewSchedule, subscribeToBusinessInterviewSchedules } from '@/lib/business_interviews'
 import { mediaUrl } from '@/lib/media'
 import {
+  deleteBusinessAssessmentAssignmentRecord,
   deleteBusinessAssessmentTemplateRecord,
+  deleteBusinessTrainingAssignmentRecord,
   deleteBusinessTrainingTemplateRecord,
   saveBusinessAssessmentAssignmentRecord,
   saveBusinessAssessmentTemplateRecord,
@@ -333,6 +345,16 @@ const paymentToast = reactive(createPaymentToastState())
 const assignPaymentToastState = (value) => {
   Object.assign(paymentToast, normalizePaymentToastState(value))
 }
+const businessWorkspaceToast = computed(() =>
+  paymentToast.visible
+    ? {
+        title: paymentToast.title,
+        text: paymentToast.message,
+        kind: paymentToast.tone,
+        actions: paymentToast.actions,
+      }
+    : null,
+)
 const paymentContactCountryCode = ref('PH')
 const isPaymentContactCountryDropdownOpen = ref(false)
 const paymentContactCountryDropdownRef = ref(null)
@@ -390,6 +412,7 @@ let stopBusinessJobApplicationsSync = () => {}
 let stopBusinessPaymentHistorySync = () => {}
 let stopApplicantAssessmentScoreSync = () => {}
 let stopBusinessInterviewSchedulesSync = () => {}
+let stopBusinessContractSync = () => {}
 let stopAssessmentTemplateSync = () => {}
 let stopTrainingTemplateSync = () => {}
 let stopAssessmentAssignmentSync = () => {}
@@ -1410,10 +1433,35 @@ const jobPostingCreatedPreview = new Intl.DateTimeFormat('en-US', {
   day: '2-digit',
   year: 'numeric',
 }).format(new Date())
+const JOB_POSTING_DISABILITY_TYPE_LOOKUP = new Map(
+  JOB_POSTING_DISABILITY_TYPES.map((entry) => [
+    String(entry?.value || '').trim(),
+    String(entry?.label || entry?.value || '').trim(),
+  ]),
+)
+const normalizeJobPostingDisabilityTypes = (value) => {
+  const sourceValues = Array.isArray(value) ? value : [value]
+
+  return [...new Set(
+    sourceValues
+      .flatMap((entry) => String(entry || '').split(/[\r\n,]+/))
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+  )]
+}
+const serializeJobPostingDisabilityTypes = (value) =>
+  normalizeJobPostingDisabilityTypes(value).join(', ')
+const resolveJobPostingDisabilityTypeLabel = (value) =>
+  JOB_POSTING_DISABILITY_TYPE_LOOKUP.get(String(value || '').trim()) || String(value || '').trim()
 const jobPostingQualificationsPreview = computed(() => toJobPostingLineItems(jobPostingDraft.value.qualifications))
 const jobPostingResponsibilitiesPreview = computed(() => toJobPostingLineItems(jobPostingDraft.value.responsibilities))
+const jobPostingSelectedDisabilityTypes = computed(() =>
+  normalizeJobPostingDisabilityTypes(jobPostingDraft.value.disabilityType),
+)
 const jobPostingDisabilityTypeNeedsSpecification = computed(() =>
-  JOB_POSTING_DISABILITY_TYPES_REQUIRING_SPECIFICATION.has(String(jobPostingDraft.value.disabilityType || '').trim()),
+  jobPostingSelectedDisabilityTypes.value.some((entry) =>
+    JOB_POSTING_DISABILITY_TYPES_REQUIRING_SPECIFICATION.has(String(entry || '').trim()),
+  ),
 )
 const jobPostingTypeLabel = computed(() =>
   String(jobPostingDraft.value.type || '').trim() || 'Select job type',
@@ -1421,9 +1469,15 @@ const jobPostingTypeLabel = computed(() =>
 const jobPostingBarangayLabel = computed(() =>
   JOB_POSTING_BARANGAYS.find((entry) => entry.value === jobPostingDraft.value.barangay)?.label || 'Select barangay',
 )
-const jobPostingDisabilityLabel = computed(() =>
-  JOB_POSTING_DISABILITY_TYPES.find((entry) => entry.value === jobPostingDraft.value.disabilityType)?.label || 'Select disability type',
-)
+const jobPostingDisabilityLabel = computed(() => {
+  const selectedLabels = jobPostingSelectedDisabilityTypes.value
+    .map((entry) => resolveJobPostingDisabilityTypeLabel(entry))
+    .filter(Boolean)
+
+  if (!selectedLabels.length) return 'Select disability types'
+  if (selectedLabels.length <= 2) return selectedLabels.join(', ')
+  return `${selectedLabels.slice(0, 2).join(', ')} +${selectedLabels.length - 2} more`
+})
 const jobPostingLanguageLabel = computed(() =>
   JOB_POSTING_LANGUAGE_OPTIONS.find((entry) => entry.value === jobPostingDraft.value.language)?.label || 'Select language',
 )
@@ -1487,7 +1541,7 @@ const createPostedJobRecord = (record = {}) => ({
   vacancies: Math.max(1, Number(record.vacancies || 1) || 1),
   salary: String(record.salary || record.salaryRange || 'Negotiable').trim(),
   salaryRange: String(record.salaryRange || record.salary || 'Negotiable').trim(),
-  disabilityType: String(record.disabilityType || '').trim(),
+  disabilityType: serializeJobPostingDisabilityTypes(record.disabilityType || record.disabilityTypes),
   impairmentSpecification: String(record.impairmentSpecification || '').trim(),
   preferredAgeRange: String(record.preferredAgeRange || '').trim(),
   language: String(record.language || '').trim(),
@@ -1576,7 +1630,7 @@ const createJobPostingDraftFromRecord = (job = {}) => ({
   barangay: String(job.barangay || '').trim(),
   vacancies: String(job.vacancies || ''),
   salaryRange: String(job.salaryRange || job.salary || '').trim(),
-  disabilityType: String(job.disabilityType || '').trim(),
+  disabilityType: serializeJobPostingDisabilityTypes(job.disabilityType || job.disabilityTypes),
   impairmentSpecification: String(job.impairmentSpecification || '').trim(),
   preferredAgeRange: String(job.preferredAgeRange || '').trim(),
   language: String(job.language || '').trim(),
@@ -1700,17 +1754,8 @@ const permanentlyDeleteJobPost = async (jobId) => {
         const normalizedJobTitle = String(selectedJob.title || 'this job post').trim() || 'this job post'
         const applicationDiscontinuationReason = `The job post "${normalizedJobTitle}" was deleted by the business. This application was discontinued.`
         const buildInterviewCancellationReason = (application = {}, schedule = {}) => {
-          const interviewType = String(
-            schedule?.interviewType
-              || schedule?.interview_type
-              || application?.interviewType
-              || application?.interview_type
-              || 'initial',
-          ).trim().toLowerCase() || 'initial'
-          const interviewLabel = interviewType === 'final' ? 'final interview' : 'initial interview'
-          return `The job post "${normalizedJobTitle}" was deleted by the business. The ${interviewLabel} was cancelled and the application was discontinued.`
+          return `The job post "${normalizedJobTitle}" was deleted by the business. The interview was cancelled and the application was discontinued.`
         }
-        const assessmentDiscontinuationReason = `The job post "${normalizedJobTitle}" was deleted by the business. This technical assessment was discontinued because the application was discontinued.`
         const affectedApplications = businessJobApplications.value.filter((application) =>
           String(application?.jobId || application?.job_id || '').trim() === normalizedJobId
           && canUpdateApplicantManagementStatus(application?.status),
@@ -1724,6 +1769,11 @@ const permanentlyDeleteJobPost = async (jobId) => {
           affectedApplicationIds.has(String(record?.applicationId || record?.application_id || '').trim()))
         const relatedAssessmentAssignments = assessmentAssignmentRecords.value.filter((record) =>
           affectedApplicationIds.has(String(record?.applicationId || record?.application_id || record?.id || '').trim()))
+        const relatedTrainingAssignments = trainingAssignmentRecords.value.filter((record) =>
+          affectedApplicationIds.has(String(record?.applicationId || record?.application_id || record?.id || record?.memberId || '').trim())
+          || String(record?.jobId || record?.job_id || '').trim() === normalizedJobId)
+        const relatedApplicantScoreEntries = applicantAssessmentScoreEntries.value.filter((entry) =>
+          affectedApplicationIds.has(String(entry?.id || '').trim()))
         const assessmentAssignmentsByApplicationId = new Map()
         relatedAssessmentAssignments.forEach((record) => {
           const applicationId = String(record?.applicationId || record?.application_id || record?.id || '').trim()
@@ -1772,17 +1822,30 @@ const permanentlyDeleteJobPost = async (jobId) => {
             })
           }),
           ...relatedAssessmentAssignments.map((assignment) =>
-            saveBusinessAssessmentAssignmentRecord({
-              ...assignment,
-              assignmentStatus: 'Cancelled',
-              assessmentStatus: 'cancelled',
-              cancellationReason: assessmentDiscontinuationReason,
-            })),
+            deleteBusinessAssessmentAssignmentRecord(String(assignment?.id || assignment?.applicationId || assignment?.application_id || '').trim())),
+          ...relatedApplicantScoreEntries.map((entry) =>
+            deleteBusinessApplicantScoreRecord(String(entry?.id || '').trim())),
+          ...relatedTrainingAssignments.map((assignment) =>
+            deleteBusinessTrainingAssignmentRecord(
+              String(assignment?.id || assignment?.applicationId || assignment?.application_id || assignment?.memberId || '').trim(),
+            )),
         ])
 
         await deleteBusinessJobPost(normalizedJobId, {
           workspaceOwnerId: selectedJob.workspaceOwnerId || getWorkspaceOwnerDirectoryId(),
         })
+
+        assessmentAssignmentRecords.value = assessmentAssignmentRecords.value.filter((record) =>
+          !affectedApplicationIds.has(String(record?.applicationId || record?.application_id || record?.id || '').trim()))
+        applicantAssessmentScoreEntries.value = applicantAssessmentScoreEntries.value.filter((entry) =>
+          !affectedApplicationIds.has(String(entry?.id || '').trim()))
+        trainingAssignmentRecords.value = trainingAssignmentRecords.value.filter((record) => {
+          const applicationId = String(record?.applicationId || record?.application_id || record?.id || record?.memberId || '').trim()
+          const jobId = String(record?.jobId || record?.job_id || '').trim()
+          return !affectedApplicationIds.has(applicationId) && jobId !== normalizedJobId
+        })
+        rebuildApprovedApplicantAssignments()
+        rebuildTrainingAssignments()
 
         if (editingJobPostId.value === normalizedJobId) {
           resetJobPostingDraft()
@@ -3269,6 +3332,8 @@ const selectedApplicantManagementDetails = computed(() => {
     applicantName: String(application?.applicantName || 'Applicant').trim() || 'Applicant',
     applicantEmail: String(application?.applicantEmail || 'No email').trim() || 'No email',
     applicantAvatar: mediaUrl(String(application?.applicantAvatar || application?.avatar || application?.avatar_url || '').trim()),
+    applicantResumeUrl: mediaUrl(String(application?.applicantResumeUrl || application?.applicant_resume_url || application?.resumeUrl || application?.resume_url || '').trim()),
+    applicantResumeFileName: String(application?.applicantResumeFileName || application?.applicant_resume_file_name || application?.resumeFileName || application?.resume_file_name || 'Applicant resume.pdf').trim() || 'Applicant resume.pdf',
     jobTitle: String(application?.jobTitle || 'Applied Job').trim() || 'Applied Job',
     statusLabel: formatApplicantManagementStatusLabel(application?.status),
     appliedAtLabel: formatUserOverviewDate(resolveBusinessApplicationAppliedAt(application)),
@@ -4017,6 +4082,38 @@ const startBusinessJobApplicationsFirestoreSync = () => {
   )
 }
 
+const startBusinessContractFirestoreSync = () => {
+  stopBusinessContractSync()
+
+  const workspaceOwnerId = getWorkspaceOwnerDirectoryId()
+  const workspaceOwnerEmail = String(
+    authUser.value?.workspace_owner_email
+    || authUser.value?.workspaceOwnerEmail
+    || authUser.value?.business_contact_email
+    || authUser.value?.email
+    || '',
+  ).trim().toLowerCase()
+
+  if (!workspaceOwnerId && !workspaceOwnerEmail) {
+    businessContractRecords.value = []
+    return
+  }
+
+  stopBusinessContractSync = subscribeToBusinessContracts(
+    {
+      workspaceOwnerId,
+      workspaceOwnerEmail,
+    },
+    (records) => {
+      businessContractRecords.value = Array.isArray(records) ? records : []
+    },
+    (error) => {
+      console.warn('[business-workspace] Contract signing subscription failed.', error)
+      businessContractRecords.value = []
+    },
+  )
+}
+
 const startBusinessInterviewSchedulesFirestoreSync = () => {
   stopBusinessInterviewSchedulesSync()
 
@@ -4146,12 +4243,15 @@ const normalizeJobPostingDraftInput = (draft = {}) => ({
 })
 const handleJobPostingFieldChange = (key, value) => {
   if (key === 'disabilityType') {
+    const normalizedDisabilityType = serializeJobPostingDisabilityTypes(value)
+    const shouldKeepSpecification = normalizeJobPostingDisabilityTypes(normalizedDisabilityType).some((entry) =>
+      JOB_POSTING_DISABILITY_TYPES_REQUIRING_SPECIFICATION.has(String(entry || '').trim()),
+    )
+
     jobPostingDraft.value = {
       ...jobPostingDraft.value,
-      disabilityType: value,
-      impairmentSpecification: JOB_POSTING_DISABILITY_TYPES_REQUIRING_SPECIFICATION.has(String(value || '').trim())
-        ? jobPostingDraft.value.impairmentSpecification
-        : '',
+      disabilityType: normalizedDisabilityType,
+      impairmentSpecification: shouldKeepSpecification ? jobPostingDraft.value.impairmentSpecification : '',
     }
     return
   }
@@ -4220,6 +4320,9 @@ const handleJobPostingFieldChange = (key, value) => {
     [key]: value,
   }
 }
+const setJobPostingDisabilityTypes = (values = []) => {
+  handleJobPostingFieldChange('disabilityType', values)
+}
 const saveJobPost = async () => {
   if (!canEditBusinessModule('job-posting')) {
     showPaymentToast('Your role has view-only access for Job Posting.', 'warning')
@@ -4246,11 +4349,7 @@ const saveJobPost = async () => {
     ['language', normalizedJobPostingDraft.language],
     ['qualifications', normalizedJobPostingDraft.qualifications],
     ['responsibilities', normalizedJobPostingDraft.responsibilities],
-  ].concat(
-    jobPostingDisabilityTypeNeedsSpecification.value
-      ? [['impairment specification', normalizedJobPostingDraft.impairmentSpecification]]
-      : [],
-  )
+  ]
 
   const missingFields = requiredFields
     .filter(([, value]) => String(value ?? '').trim() === '')
@@ -4299,6 +4398,12 @@ const saveJobPost = async () => {
     return false
   }
 
+  const preferredAge = Number(normalizedJobPostingDraft.preferredAgeRange)
+  if (!Number.isFinite(preferredAge) || preferredAge < 18) {
+    showPaymentToast('Preferred age must be 18 or above.', 'warning')
+    return false
+  }
+
   const workspaceOwnerId = getWorkspaceOwnerDirectoryId()
   const workspaceOwnerEmail = String(
     authUser.value?.workspace_owner_email
@@ -4310,7 +4415,9 @@ const saveJobPost = async () => {
   const employerId = String(auth.currentUser?.uid || authUser.value?.uid || authUser.value?.id || workspaceOwnerId || '').trim()
 
   if (!workspaceOwnerId || !employerId) {
-    showPaymentToast('Refresh the page and sign in again before saving this job post.', 'error')
+    showPaymentToast('Refresh the page and sign in again before saving this job post.', 'error', {
+      title: 'Job Post Failed',
+    })
     return false
   }
 
@@ -4331,9 +4438,9 @@ const saveJobPost = async () => {
       vacancies: vacancyCount,
       salary: jobPostingSalaryPreview.value,
       salaryRange: normalizedJobPostingDraft.salaryRange,
-      disabilityType: normalizedJobPostingDraft.disabilityType,
+      disabilityType: serializeJobPostingDisabilityTypes(normalizedJobPostingDraft.disabilityType),
       impairmentSpecification: normalizedJobPostingDraft.impairmentSpecification,
-      preferredAgeRange: normalizedJobPostingDraft.preferredAgeRange,
+      preferredAgeRange: String(preferredAge),
       language: normalizedJobPostingDraft.language,
       languages: normalizedJobPostingDraft.language,
       qualifications: toJobPostingLineItems(normalizedJobPostingDraft.qualifications),
@@ -4351,6 +4458,7 @@ const saveJobPost = async () => {
 
     if (savedJob) {
       syncPostedJobRecordLocally(savedJob)
+      startWorkspaceJobPostsSync()
     }
 
     resetJobPostingDraft()
@@ -4370,6 +4478,9 @@ const saveJobPost = async () => {
           ? 'Unable to update the job post right now.'
           : 'Unable to publish the job post right now.',
       'error',
+      {
+        title: isEditingJobPost.value ? 'Save Failed' : 'Job Post Failed',
+      },
     )
     return false
   } finally {
@@ -4433,14 +4544,22 @@ const formatJobPostingSalaryRangeInput = (value) => {
 }
 
 const buildJobPostingDisabilityFitLabel = (disabilityType, impairmentSpecification) => {
-  const category = String(disabilityType || '').trim()
+  const category = normalizeJobPostingDisabilityTypes(disabilityType)
+    .map((entry) => resolveJobPostingDisabilityTypeLabel(entry))
+    .join(', ')
   const specification = String(impairmentSpecification || '').trim()
   if (category && specification) return `${category} - ${specification}`
   return category || specification
 }
 
 const getJobPostingImpairmentSpecificationPlaceholder = (disabilityType) => {
-  switch (String(disabilityType || '').trim()) {
+  const normalizedDisabilityTypes = normalizeJobPostingDisabilityTypes(disabilityType)
+
+  if (normalizedDisabilityTypes.length > 1) {
+    return 'Example: Limited hand mobility, low vision, hard of hearing'
+  }
+
+  switch (normalizedDisabilityTypes[0] || '') {
     case 'Physical Impairment':
       return 'Example: Right leg, left arm, limited hand mobility'
     case 'Visual Impairment':
@@ -4582,7 +4701,7 @@ const businessInterviewWeekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'
 const createBusinessInterviewSchedulingForm = () => ({
   selectedJobKey: '',
   applicationId: '',
-  interviewType: 'initial',
+  interviewType: 'interview',
   scheduledAt: '',
   mode: 'in-person',
   locationOrLink: '',
@@ -4614,6 +4733,10 @@ const normalizeBusinessInterviewScheduleStatus = (value) =>
   String(value || 'scheduled').trim().toLowerCase()
 const normalizeBusinessInterviewApplicantResponseStatus = (value) =>
   String(value || 'pending').trim().toLowerCase() || 'pending'
+const normalizeBusinessInterviewTypeValue = (value) => {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  return normalizedValue ? 'interview' : 'interview'
+}
 const resolveBusinessInterviewMirrorText = (...values) => {
   for (const value of values) {
     const normalizedValue = String(value || '').trim()
@@ -4659,7 +4782,9 @@ const getBusinessInterviewApplicationMirrorActivityTime = (record = {}) =>
     parseBusinessInterviewTimestamp(record?.interview_schedule),
   )
 const getBusinessInterviewRecordInterviewType = (record = {}) =>
-  resolveBusinessInterviewMirrorText(record?.interviewType, record?.interview_type, 'initial') || 'initial'
+  normalizeBusinessInterviewTypeValue(
+    resolveBusinessInterviewMirrorText(record?.interviewType, record?.interview_type, 'interview'),
+  )
 const getBusinessInterviewRecordScheduledAt = (record = {}) =>
   resolveBusinessInterviewMirrorText(
     record?.scheduledAt,
@@ -4768,8 +4893,7 @@ const buildBusinessInterviewDecisionScheduleOptionDrafts = (values = []) => {
 
   return normalizedValues.length ? normalizedValues : createBusinessInterviewDecisionScheduleOptions()
 }
-const formatBusinessInterviewTypeLabel = (value) =>
-  String(value || 'initial').trim().toLowerCase() === 'final' ? 'Final Interview' : 'Initial Interview'
+const formatBusinessInterviewTypeLabel = () => 'Interview'
 const formatBusinessInterviewModeLabel = (value) =>
   String(value || 'in-person').trim().toLowerCase() === 'online' ? 'Online interview' : 'In-person interview'
 const resolveBusinessInterviewTechnicalStageText = (state) => {
@@ -4938,27 +5062,25 @@ const businessInterviewSelectedApplicantSchedules = computed(() => {
 
   return businessInterviewSchedules.value.filter((entry) => String(entry.applicationId || '').trim() === applicationId)
 })
-const businessInterviewHasCompletedInitialInterview = computed(() =>
+const businessInterviewHasCompletedInterview = computed(() =>
   businessInterviewSelectedApplicantSchedules.value.some(
-    (entry) => entry.interviewType === 'initial' && normalizeBusinessInterviewScheduleStatus(entry.scheduleStatus) === 'completed',
+    (entry) => normalizeBusinessInterviewScheduleStatus(entry.scheduleStatus) === 'completed',
   ),
 )
-const hasCompletedBusinessInterviewType = (applicationId, interviewType = 'initial') => {
+const hasCompletedBusinessInterviewType = (applicationId) => {
   const normalizedApplicationId = String(applicationId || '').trim()
-  const normalizedInterviewType = String(interviewType || 'initial').trim().toLowerCase() || 'initial'
 
   if (!normalizedApplicationId) return false
 
   return businessInterviewSchedules.value.some((entry) =>
     String(entry?.applicationId || entry?.application_id || '').trim() === normalizedApplicationId
-    && String(entry?.interviewType || entry?.interview_type || 'initial').trim().toLowerCase() === normalizedInterviewType
     && normalizeBusinessInterviewScheduleStatus(entry?.scheduleStatus || entry?.schedule_status) === 'completed')
 }
 const trainingEligibleApplicantProfiles = computed(() =>
   businessJobApplications.value
     .filter((application) =>
       isBusinessApplicationLinkedToPostedJob(application)
-      && hasCompletedBusinessInterviewType(application?.id, 'final'),
+      && hasCompletedBusinessInterviewType(application?.id),
     )
     .map((application) => ({
       id: String(application?.id || '').trim(),
@@ -4969,18 +5091,12 @@ const trainingEligibleApplicantProfiles = computed(() =>
       role: String(application?.jobTitle || application?.job_title || 'Applied Job').trim() || 'Applied Job',
       jobId: String(application?.jobId || application?.job_id || '').trim(),
       jobTitle: String(application?.jobTitle || application?.job_title || 'Applied Job').trim() || 'Applied Job',
-      stage: 'Final interview completed',
+      stage: 'Interview completed',
     }))
     .filter((application) => application.id)
     .sort((left, right) => left.name.localeCompare(right.name)),
 )
-const businessInterviewAvailableInterviewTypeOptions = computed(() => {
-  if (businessInterviewHasCompletedInitialInterview.value) {
-    return [{ value: 'final', label: 'Final Interview' }]
-  }
-
-  return [{ value: 'initial', label: 'Initial Interview' }]
-})
+const businessInterviewAvailableInterviewTypeOptions = computed(() => [{ value: 'interview', label: 'Interview' }])
 const isBusinessInterviewScheduleActive = (record = {}) => {
   const scheduleStatus = normalizeBusinessInterviewScheduleStatus(record?.scheduleStatus || record?.schedule_status)
   return !['completed', 'cancelled'].includes(scheduleStatus)
@@ -5180,7 +5296,9 @@ const buildBusinessInterviewApplicationPayload = (schedule = {}, overrides = {})
   status: String(overrides.status ?? 'interview').trim() || 'interview',
   interviewSchedule: String(overrides.interviewSchedule ?? schedule?.scheduledAt ?? '').trim(),
   interviewDate: String(overrides.interviewDate ?? schedule?.scheduledAt ?? '').trim(),
-  interviewType: String(overrides.interviewType ?? schedule?.interviewType ?? schedule?.interview_type ?? 'initial').trim() || 'initial',
+  interviewType: normalizeBusinessInterviewTypeValue(
+    overrides.interviewType ?? schedule?.interviewType ?? schedule?.interview_type ?? 'interview',
+  ),
   interviewer: String(overrides.interviewer ?? schedule?.interviewer ?? '').trim(),
   interviewMode: String(overrides.interviewMode ?? schedule?.mode ?? '').trim(),
   interviewLocationOrLink: String(overrides.interviewLocationOrLink ?? schedule?.locationOrLink ?? '').trim(),
@@ -5570,6 +5688,7 @@ const countTrainingTemplateSkills = (template = {}) =>
 const createEmptyTrainingTemplateDraft = () => ({
   title: '',
   description: '',
+  passingScorePercent: 70,
   categories: [
     createTrainingTemplateCategory(),
   ],
@@ -5590,6 +5709,7 @@ const normalizeTrainingTemplateRecord = (template = {}) => {
     id: String(template?.id || createTrainingTemplateId()),
     title: String(template?.title || '').trim(),
     description: String(template?.description || '').trim(),
+    passingScorePercent: normalizeAssessmentPassingScorePercent(template?.passingScorePercent || template?.passing_score_percent, 70),
     categories: normalizedCategories.length ? normalizedCategories : [createTrainingTemplateCategory()],
     updatedAt: String(template?.updatedAt || new Date().toISOString()),
   }
@@ -5601,6 +5721,7 @@ const createTrainingTemplateDraftFromRecord = (template = {}) => {
   return {
     title: normalized.title,
     description: normalized.description,
+    passingScorePercent: normalized.passingScorePercent,
     categories: normalized.categories.map((category) => cloneTrainingTemplateCategory(category)),
   }
 }
@@ -5727,6 +5848,8 @@ const saveTrainingTemplate = async () => {
     return
   }
 
+  const passingScorePercent = normalizeAssessmentPassingScorePercent(trainingTemplateDraft.value.passingScorePercent, 70)
+
   const hasCategories = Array.isArray(trainingTemplateDraft.value.categories) && trainingTemplateDraft.value.categories.length
   if (!hasCategories) {
     showPaymentToast('Add at least one training category before saving the template.', 'warning')
@@ -5754,6 +5877,7 @@ const saveTrainingTemplate = async () => {
     ...trainingTemplateDraft.value,
     id: editingTrainingTemplateId.value || createTrainingTemplateId(),
     title: normalizedTitle,
+    passingScorePercent,
     updatedAt: new Date().toISOString(),
   })
 
@@ -5996,7 +6120,7 @@ const buildTrainingAssignmentRecordPayload = (assignment = {}, overrides = {}) =
     name: String(overrides.name ?? assignment?.name ?? 'Applicant').trim() || 'Applicant',
     email: String(overrides.email ?? assignment?.email ?? '').trim().toLowerCase(),
     role: String(overrides.role ?? assignment?.role ?? 'Applicant').trim() || 'Applicant',
-    stage: String(overrides.stage ?? assignment?.stage ?? 'Final interview completed').trim() || 'Final interview completed',
+    stage: String(overrides.stage ?? assignment?.stage ?? 'Interview completed').trim() || 'Interview completed',
     selectedTemplateId,
     templateTitle: String(overrides.templateTitle ?? assignment?.templateTitle ?? selectedTemplate?.title ?? '').trim(),
     templateDescription: String(overrides.templateDescription ?? assignment?.templateDescription ?? selectedTemplate?.description ?? '').trim(),
@@ -6014,6 +6138,8 @@ const buildTrainingAssignmentRecordPayload = (assignment = {}, overrides = {}) =
 }
 
 const selectedTrainingTrackingAssignmentId = ref('')
+const selectedTrainingTrackingCategoryId = ref('')
+const selectedTrainingTrackingSkillKey = ref('')
 const trainingTrackingViewMode = ref('table')
 const TRAINING_TRACKING_GRADE_SCALE = [1, 2, 3, 4, 5]
 const trainingTrackingSavingSkillKeys = ref([])
@@ -6092,11 +6218,45 @@ const openTrainingTrackingDetail = (assignmentId) => {
   if (!normalizedAssignmentId) return
 
   selectedTrainingTrackingAssignmentId.value = normalizedAssignmentId
+  const targetAssignment = trainingTrackingAssignments.value.find((assignment) =>
+    String(assignment?.id || '').trim() === normalizedAssignmentId) || null
+  selectedTrainingTrackingCategoryId.value = String(targetAssignment?.templateCategories?.[0]?.id || '').trim()
+  selectedTrainingTrackingSkillKey.value = ''
   trainingTrackingViewMode.value = 'detail'
 }
 
 const returnToTrainingTrackingTable = () => {
   trainingTrackingViewMode.value = 'table'
+  selectedTrainingTrackingCategoryId.value = ''
+  selectedTrainingTrackingSkillKey.value = ''
+}
+
+const isTrainingTrackingCategorySelected = (categoryId) =>
+  String(selectedTrainingTrackingCategoryId.value || '').trim() === String(categoryId || '').trim()
+
+const toggleTrainingTrackingCategorySelection = (categoryId) => {
+  const normalizedCategoryId = String(categoryId || '').trim()
+  if (!normalizedCategoryId) return
+
+  selectedTrainingTrackingCategoryId.value = isTrainingTrackingCategorySelected(normalizedCategoryId)
+    ? ''
+    : normalizedCategoryId
+  selectedTrainingTrackingSkillKey.value = ''
+}
+
+const createTrainingTrackingSelectedSkillKey = (assignmentId, categoryId, skillId) =>
+  [assignmentId, categoryId, skillId].map((value) => String(value || '').trim()).join(':')
+
+const isTrainingTrackingSkillSelected = (assignmentId, categoryId, skillId) =>
+  String(selectedTrainingTrackingSkillKey.value || '').trim() === createTrainingTrackingSelectedSkillKey(assignmentId, categoryId, skillId)
+
+const toggleTrainingTrackingSkillSelection = (assignmentId, categoryId, skillId) => {
+  const nextSkillKey = createTrainingTrackingSelectedSkillKey(assignmentId, categoryId, skillId)
+  if (!nextSkillKey.replace(/:/g, '')) return
+
+  selectedTrainingTrackingSkillKey.value = isTrainingTrackingSkillSelected(assignmentId, categoryId, skillId)
+    ? ''
+    : nextSkillKey
 }
 
 const getAssignableTrainingTemplateLabel = (templateId, fallbackTitle = '') =>
@@ -6152,6 +6312,15 @@ const syncLocalTrainingAssignmentRecord = (nextRecord = {}) => {
   rebuildTrainingAssignments()
 }
 
+const removeLocalTrainingAssignmentRecord = (recordId = '') => {
+  const normalizedId = String(recordId || '').trim()
+  if (!normalizedId) return
+
+  trainingAssignmentRecords.value = trainingAssignmentRecords.value.filter((record) =>
+    String(record?.id || record?.memberId || record?.applicationId || '').trim() !== normalizedId)
+  rebuildTrainingAssignments()
+}
+
 const handleTrainingAssignmentTemplateSelection = async () => Promise.resolve()
 
 const assignTrainingTemplateToMember = async (memberId) => {
@@ -6166,6 +6335,17 @@ const assignTrainingTemplateToMember = async (memberId) => {
     buildTrainingAssignmentRecordPayload,
     buildTrainingAssignmentSnapshotFromTemplate,
     syncLocalTrainingAssignmentRecord,
+  })
+}
+
+const removeAssignedTrainingTemplateFromMember = async (memberId) => {
+  await removeAssignedTrainingTemplateFromMemberProcess({
+    memberId,
+    canEditTrainingAssignments,
+    trainingTemplateAssignments,
+    trainingAssignmentRecords,
+    showPaymentToast,
+    removeLocalTrainingAssignmentRecord,
   })
 }
 
@@ -6809,12 +6989,15 @@ const createDefaultBusinessIssueOfferDraft = () => ({
   offerLetter: '',
 })
 const businessIssueOfferDraft = ref(createDefaultBusinessIssueOfferDraft())
+const businessContractRecords = ref([])
 const contractSigningFilter = ref('all')
 const contractSigningSelectedRowId = ref('')
 const isBusinessContractSaving = ref(false)
 const activeBusinessContractSigningId = ref('')
+const activeBusinessProviderContractId = ref('')
 const businessContractSignatureName = ref('')
 const createDefaultBusinessContractDraft = () => ({
+  id: '',
   applicationId: '',
   applicantId: '',
   applicantName: '',
@@ -6823,6 +7006,8 @@ const createDefaultBusinessContractDraft = () => ({
   jobTitle: '',
   companyName: '',
   businessName: '',
+  workspaceOwnerId: '',
+  workspaceOwnerEmail: '',
   contractTitle: '',
   employmentType: '',
   salaryOffer: '',
@@ -6854,15 +7039,12 @@ const formatPilotBusinessOfferStatusLabel = (value = '') => {
 const buildBusinessIssueOfferStageSummary = (application = {}) => {
   const applicationId = String(application?.id || '').trim()
   const latestInterview = getLatestBusinessInterviewSchedule(applicationId)
-  const hasCompletedFinalInterview = hasCompletedBusinessInterviewType(applicationId, 'final')
-  const hasCompletedInitialInterview = hasCompletedBusinessInterviewType(applicationId, 'initial')
+  const hasCompletedInterview = hasCompletedBusinessInterviewType(applicationId)
 
   return {
-    interviewType: hasCompletedFinalInterview ? 'final' : 'initial',
-    passedStageLabel: hasCompletedFinalInterview
-      ? 'Final Interview Completed'
-      : hasCompletedInitialInterview
-        ? 'Initial Interview Completed'
+    interviewType: 'interview',
+    passedStageLabel: hasCompletedInterview
+      ? 'Interview Completed'
         : isApprovedBusinessApplication(application)
           ? 'Application Approved'
           : 'Ready for Offer',
@@ -6893,8 +7075,7 @@ const canIssueOfferForApplication = (application = {}) => {
   if (['rejected', 'discontinued'].includes(normalizedStatus)) return false
 
   const applicationId = String(application?.id || '').trim()
-  return hasCompletedBusinessInterviewType(applicationId, 'final')
-    || hasCompletedBusinessInterviewType(applicationId, 'initial')
+  return hasCompletedBusinessInterviewType(applicationId)
     || isApprovedBusinessApplication(application)
 }
 
@@ -7156,6 +7337,7 @@ const normalizeBusinessContractStatus = (value = '') =>
 
 const getBusinessContractStatusLabel = (value = '') => {
   const normalizedStatus = normalizeBusinessContractStatus(value)
+  if (normalizedStatus === 'not_ready') return 'Awaiting Approval'
   if (normalizedStatus === 'completed') return 'Completed'
   if (normalizedStatus === 'applicant_signed') return 'Returned by Applicant'
   if (normalizedStatus === 'sent') return 'Sent to Applicant'
@@ -7164,6 +7346,7 @@ const getBusinessContractStatusLabel = (value = '') => {
 
 const getBusinessContractStatusTone = (value = '') => {
   const normalizedStatus = normalizeBusinessContractStatus(value)
+  if (normalizedStatus === 'not_ready') return 'muted'
   if (normalizedStatus === 'completed') return 'success'
   if (normalizedStatus === 'applicant_signed') return 'info'
   if (normalizedStatus === 'sent') return 'warning'
@@ -7186,93 +7369,190 @@ const buildBusinessContractBody = (row = {}) => {
     `Compensation: ${compensation}`,
     startDate ? `Target start date: ${startDate}` : 'Target start date: To be finalized with the applicant.',
     '',
-    'Both parties will review the final live signing flow after this preview branch is approved.',
+    'The applicant agrees to perform the duties of the role, follow company policies, and complete the required onboarding steps once the contract is fully signed.',
+    '',
+    'Compensation, employment type, start date, and any additional hiring notes are listed above and form part of this agreement.',
+    '',
+    'Both parties confirm that an electronic signature captured in this platform serves as acceptance of this contract version.',
   ].join('\n')
 }
 
-const buildBusinessContractDraftFromRow = (row = {}) => ({
-  applicationId: String(row?.applicationId || row?.id || '').trim(),
-  applicantId: String(row?.applicantId || '').trim(),
-  applicantName: String(row?.name || 'Applicant').trim() || 'Applicant',
-  applicantEmail: String(row?.email || '').trim().toLowerCase(),
-  jobId: String(row?.jobId || '').trim(),
-  jobTitle: String(row?.jobTitle || row?.role || 'Applied Job').trim() || 'Applied Job',
-  companyName: String(row?.companyName || row?.businessName || businessName.value || '').trim(),
-  businessName: String(row?.businessName || row?.companyName || businessName.value || '').trim(),
-  contractTitle: String(row?.contractTitle || `${String(row?.jobTitle || 'Employment').trim()} Contract`).trim(),
-  employmentType: String(row?.employmentType || row?.jobType || 'Full-time').trim() || 'Full-time',
-  salaryOffer: String(row?.salaryOffer || row?.compensation || '').trim(),
-  startDate: String(row?.startDate || '').trim(),
-  notes: String(row?.notes || '').trim(),
-  contractBody: String(row?.contractBody || buildBusinessContractBody(row)).trim(),
+const buildBusinessContractDraftFromRow = (row = {}) => {
+  const workspaceOwnerId = String(authUser.value?.workspace_owner_id || authUser.value?.workspaceOwnerId || authUser.value?.id || '').trim()
+  const workspaceOwnerEmail = String(
+    authUser.value?.workspace_owner_email
+    || authUser.value?.workspaceOwnerEmail
+    || authUser.value?.business_contact_email
+    || authUser.value?.email
+    || '',
+  ).trim().toLowerCase()
+
+  return {
+    id: String(row?.contractId || '').trim(),
+    applicationId: String(row?.applicationId || row?.id || '').trim(),
+    applicantId: String(row?.applicantId || '').trim(),
+    applicantName: String(row?.name || 'Applicant').trim() || 'Applicant',
+    applicantEmail: String(row?.email || '').trim().toLowerCase(),
+    jobId: String(row?.jobId || '').trim(),
+    jobTitle: String(row?.jobTitle || row?.role || 'Applied Job').trim() || 'Applied Job',
+    companyName: String(row?.companyName || row?.businessName || businessName.value || '').trim(),
+    businessName: String(row?.businessName || row?.companyName || businessName.value || '').trim(),
+    workspaceOwnerId,
+    workspaceOwnerEmail,
+    contractTitle: String(row?.contractTitle || 'Employment Contract').trim() || 'Employment Contract',
+    employmentType: String(row?.employmentType || row?.jobType || 'Full-time').trim() || 'Full-time',
+    salaryOffer: String(row?.salaryOffer || row?.compensation || '').trim(),
+    startDate: String(row?.startDate || '').trim(),
+    notes: String(row?.notes || '').trim(),
+    contractBody: String(row?.contractBody || buildBusinessContractBody(row)).trim(),
+  }
+}
+
+const contractSigningQueueRows = computed(() => {
+  const contractByApplicationId = new Map(
+    businessContractRecords.value.map((record) => [String(record?.applicationId || '').trim(), record]),
+  )
+
+  return businessJobApplications.value
+    .filter((application) => {
+      if (!isBusinessApplicationLinkedToPostedJob(application)) return false
+
+      const normalizedStatus = normalizeUserOverviewValue(application?.status || 'pending')
+      if (['rejected', 'discontinued'].includes(normalizedStatus)) return false
+
+      return hasCompletedBusinessInterviewType(application?.id)
+    })
+    .map((application) => {
+      const applicationId = String(application?.id || '').trim()
+      const contractRecord = contractByApplicationId.get(applicationId) || null
+      const contractStatus = String(contractRecord?.status || '').trim().toLowerCase()
+      const contractStage = contractStatus || 'draft'
+      const latestInterview = getLatestBusinessInterviewSchedule(applicationId)
+      const applicantName = String(application?.applicantName || application?.applicant_name || 'Applicant').trim() || 'Applicant'
+      const jobTitle = String(application?.jobTitle || application?.job_title || 'Applied Job').trim() || 'Applied Job'
+      const lastContractActivity = Date.parse(String(
+        contractRecord?.updatedAt
+        || contractRecord?.businessSignedAt
+        || contractRecord?.applicantSignedAt
+        || contractRecord?.sentAt
+        || contractRecord?.createdAt
+        || '',
+      ).trim()) || 0
+      const interviewCompletedAt = String(
+        latestInterview?.businessDecidedAt
+        || latestInterview?.updatedAt
+        || latestInterview?.scheduledAt
+        || application?.updatedAt
+        || application?.reviewedAt
+        || '',
+      ).trim()
+      const interviewActivityValue = Date.parse(interviewCompletedAt) || 0
+
+      return {
+        id: applicationId,
+        applicationId,
+        contractId: String(contractRecord?.id || '').trim(),
+        applicantId: String(application?.applicantId || application?.applicant_id || '').trim(),
+        name: applicantName,
+        email: String(application?.applicantEmail || application?.applicant_email || 'No email').trim() || 'No email',
+        jobId: String(application?.jobId || application?.job_id || '').trim(),
+        jobTitle,
+        role: jobTitle,
+        jobType: String(application?.jobType || application?.job_type || 'Full-time').trim() || 'Full-time',
+        companyName: String(application?.companyName || application?.company_name || application?.businessName || businessName.value || '').trim(),
+        businessName: String(application?.businessName || application?.business_name || application?.companyName || businessName.value || '').trim(),
+        offerTitle: String(application?.jobOfferTitle || application?.job_offer_title || `${jobTitle} Employment Contract`).trim(),
+        offerStatus: 'interview_completed',
+        offerStatusLabel: 'Interview Completed',
+        offerAcceptedAt: interviewCompletedAt,
+        interviewStatus: 'completed',
+        interviewStatusLabel: 'Interview Completed',
+        interviewCompletedAt,
+        interviewer: String(
+          latestInterview?.interviewer
+          || application?.reviewedByName
+          || authUser.value?.name
+          || businessName.value
+          || 'Business Hiring Team'
+        ).trim(),
+        compensation: String(
+          contractRecord?.salaryOffer
+          || application?.jobOfferCompensation
+          || application?.job_offer_compensation
+          || application?.salaryRange
+          || ''
+        ).trim(),
+        status: contractStage,
+        statusLabel: getBusinessContractStatusLabel(contractStage),
+        statusTone: getBusinessContractStatusTone(contractStage),
+        nextStep: contractStage === 'completed'
+          ? 'Contract fully signed by both parties'
+          : contractStage === 'applicant_signed'
+            ? 'Business should countersign the returned contract'
+            : contractStage === 'sent'
+              ? 'Waiting for applicant digital signature'
+              : 'Prepare and send the contract to the applicant',
+        contractTitle: String(contractRecord?.contractTitle || `${jobTitle} Employment Contract`).trim() || `${jobTitle} Employment Contract`,
+        employmentType: String(contractRecord?.employmentType || application?.jobType || application?.job_type || 'Full-time').trim() || 'Full-time',
+        salaryOffer: String(
+          contractRecord?.salaryOffer
+          || application?.jobOfferCompensation
+          || application?.job_offer_compensation
+          || application?.salaryRange
+          || ''
+        ).trim(),
+        startDate: String(contractRecord?.startDate || application?.jobOfferStartDate || application?.job_offer_start_date || '').trim(),
+        notes: String(contractRecord?.notes || '').trim(),
+        contractBody: String(contractRecord?.contractBody || buildBusinessContractBody({
+          ...application,
+          applicantName,
+          name: applicantName,
+          jobTitle,
+          role: jobTitle,
+          interviewer: latestInterview?.interviewer,
+        })).trim(),
+        sentAt: String(contractRecord?.sentAt || '').trim(),
+        applicantSignedAt: String(contractRecord?.applicantSignedAt || '').trim(),
+        businessSignedAt: String(contractRecord?.businessSignedAt || '').trim(),
+        providerEnvelopeId: String(contractRecord?.providerEnvelopeId || '').trim(),
+        signatureProvider: String(contractRecord?.signatureProvider || '').trim(),
+        canSend: !contractStatus || contractStatus === 'sent',
+        canBusinessSign: contractStatus === 'applicant_signed',
+        lastActivityValue: Math.max(interviewActivityValue, lastContractActivity),
+      }
+    })
+    .filter((row) => row.applicationId && row.applicantId)
+    .sort((left, right) => right.lastActivityValue - left.lastActivityValue)
 })
 
-const contractSigningQueueRows = computed(() =>
-  issueOfferQueueRows.value
-    .filter((row) => row.offerStatus === 'accepted' || isApprovedBusinessApplication(getApplicantManagementApplicationById(row.applicationId)))
-    .map((row) => ({
-      id: row.id,
-      applicationId: row.applicationId,
-      applicantId: String(getApplicantManagementApplicationById(row.applicationId)?.applicantId || '').trim(),
-      name: row.applicantName,
-      email: row.applicantEmail,
-      jobId: String(getApplicantManagementApplicationById(row.applicationId)?.jobId || '').trim(),
-      jobTitle: row.jobTitle,
-      role: row.jobTitle,
-      jobType: String(getApplicantManagementApplicationById(row.applicationId)?.jobType || getApplicantManagementApplicationById(row.applicationId)?.job_type || 'Full-time').trim(),
-      companyName: String(getApplicantManagementApplicationById(row.applicationId)?.companyName || getApplicantManagementApplicationById(row.applicationId)?.businessName || businessName.value || '').trim(),
-      businessName: String(getApplicantManagementApplicationById(row.applicationId)?.businessName || getApplicantManagementApplicationById(row.applicationId)?.companyName || businessName.value || '').trim(),
-      offerTitle: row.offerTitle || `${row.jobTitle} Job Offer`,
-      offerStatus: row.offerStatus,
-      offerStatusLabel: row.offerStatusLabel,
-      compensation: String(getApplicantManagementApplicationById(row.applicationId)?.salaryRange || '').trim(),
-      startDate: String(businessIssueOfferDraft.value.startDate || '').trim(),
-      status: 'draft',
-      statusLabel: getBusinessContractStatusLabel('draft'),
-      statusTone: getBusinessContractStatusTone('draft'),
-      nextStep: 'Pilot preview: review the contract layout and countersign flow before the final merge.',
-      contractTitle: `${row.jobTitle} Employment Contract`,
-      employmentType: String(getApplicantManagementApplicationById(row.applicationId)?.jobType || getApplicantManagementApplicationById(row.applicationId)?.job_type || 'Full-time').trim() || 'Full-time',
-      salaryOffer: String(getApplicantManagementApplicationById(row.applicationId)?.salaryRange || '').trim(),
-      notes: 'Pilot preview only.',
-      contractBody: buildBusinessContractBody({
-        applicantName: row.applicantName,
-        jobTitle: row.jobTitle,
-        businessName: businessName.value,
-        compensation: String(getApplicantManagementApplicationById(row.applicationId)?.salaryRange || '').trim(),
-      }),
-      sentAt: '',
-      applicantSignedAt: '',
-      businessSignedAt: '',
-      canSend: true,
-      canBusinessSign: false,
-      lastActivityValue: row.lastActivityValue,
-    }))
-    .sort((left, right) => right.lastActivityValue - left.lastActivityValue),
-)
+const contractSigningOverviewCards = computed(() => {
+  const readyCount = contractSigningQueueRows.value.filter((row) => row.status === 'draft' || row.status === 'sent').length
+  const applicantSignedCount = contractSigningQueueRows.value.filter((row) => row.status === 'applicant_signed').length
+  const completedCount = contractSigningQueueRows.value.filter((row) => row.status === 'completed').length
 
-const contractSigningOverviewCards = computed(() => ([
-  {
-    label: 'Ready For Contract',
-    value: String(contractSigningQueueRows.value.length),
-    copy: 'Preview candidates that would enter contract handling in the merged version.',
-  },
-  {
-    label: 'Ready To Send',
-    value: String(contractSigningQueueRows.value.filter((row) => row.status === 'draft').length),
-    copy: 'Draft contracts that still need the final live send flow.',
-  },
-  {
-    label: 'Returned',
-    value: '0',
-    copy: 'Returned-by-applicant states will be connected during the full live merge.',
-  },
-  {
-    label: 'Completed',
-    value: '0',
-    copy: 'Completed countersigning will appear here once the live contract flow is enabled.',
-  },
-]))
+  return [
+    {
+      label: 'Ready For Contract',
+      value: String(readyCount),
+      copy: 'Applicants with a completed interview who can move into contract preparation.',
+    },
+    {
+      label: 'Awaiting Applicant',
+      value: String(contractSigningQueueRows.value.filter((row) => row.status === 'sent').length),
+      copy: 'Contracts that were sent and are waiting for the applicant signature.',
+    },
+    {
+      label: 'Returned',
+      value: String(applicantSignedCount),
+      copy: 'Contracts already signed by the applicant and waiting for business countersign.',
+    },
+    {
+      label: 'Completed',
+      value: String(completedCount),
+      copy: 'Fully signed contracts that are ready to archive and hand off into onboarding.',
+    },
+  ]
+})
 
 const contractSigningFilterChips = computed(() => {
   const rows = contractSigningQueueRows.value
@@ -7287,12 +7567,12 @@ const contractSigningFilterChips = computed(() => {
 
 const contractSigningLastSyncedLabel = computed(() =>
   contractSigningQueueRows.value.length
-    ? 'Pilot merge preview: contract queue is using current workspace application data.'
-    : 'Pilot merge preview: no contract-ready applicants are visible yet.',
+    ? 'Live contract queue synced from interview-completed applicants and saved contracts.'
+    : 'No interview-completed applicants are visible yet.',
 )
 
 const contractSigningTraceSummary = computed(() =>
-  `${contractSigningQueueRows.value.length} preview contract row(s) generated from the current business workspace data.`,
+  `${contractSigningQueueRows.value.length} live contract row(s) generated from completed interviews and saved contracts.`,
 )
 
 const filteredContractSigningQueueRows = computed(() => {
@@ -7304,8 +7584,13 @@ const filteredContractSigningQueueRows = computed(() => {
 const selectedContractSigningRow = computed(() =>
   filteredContractSigningQueueRows.value.find((row) => row.id === contractSigningSelectedRowId.value)
   || filteredContractSigningQueueRows.value[0]
+  || contractSigningQueueRows.value.find((row) => row.id === contractSigningSelectedRowId.value)
   || contractSigningQueueRows.value[0]
   || null,
+)
+
+const selectedContractSigningRecord = computed(() =>
+  businessContractRecords.value.find((record) => String(record?.id || '').trim() === String(selectedContractSigningRow.value?.contractId || '').trim()) || null,
 )
 
 const restoreSelectedContractSigningDraft = () => {
@@ -7316,10 +7601,12 @@ const restoreSelectedContractSigningDraft = () => {
 
 const selectContractSigningRow = (rowId) => {
   const normalizedRowId = String(rowId || '').trim()
-  if (!normalizedRowId) return
-
   contractSigningSelectedRowId.value = normalizedRowId
-  restoreSelectedContractSigningDraft()
+  const matchedRow = contractSigningQueueRows.value.find((row) => row.id === normalizedRowId) || null
+  if (!matchedRow) return
+
+  businessContractDraft.value = buildBusinessContractDraftFromRow(matchedRow)
+  businessContractSignatureName.value = String(authUser.value?.name || businessName.value || '').trim()
 }
 
 const setContractDraftField = (field, value) => {
@@ -7330,47 +7617,170 @@ const setContractDraftField = (field, value) => {
 }
 
 const refreshContractSigningQueue = () => {
+  startBusinessContractFirestoreSync()
   restoreSelectedContractSigningDraft()
-  showPaymentToast('Pilot merge preview refreshed using the current business workspace data.', 'warning')
+  showPaymentToast('Contract queue refreshed from the latest saved records.', 'success')
 }
 
-const sendContractToApplicant = () => {
-  showPaymentToast('Pilot preview only: the contract send action will be fully wired after you approve this merged layout.', 'warning')
+const sendContractToApplicant = async (rowId) => {
+  const normalizedRowId = String(rowId || '').trim()
+  if (!normalizedRowId) return
+
+  selectContractSigningRow(normalizedRowId)
+  const matchedRow = contractSigningQueueRows.value.find((row) => row.id === normalizedRowId) || null
+  if (!matchedRow) return
+
+  const today = new Date().toISOString().slice(0, 10)
+  businessContractDraft.value = {
+    ...buildBusinessContractDraftFromRow(matchedRow),
+    salaryOffer: String(matchedRow.salaryOffer || matchedRow.compensation || '').trim() || 'To be finalized by the business',
+    employmentType: String(matchedRow.employmentType || matchedRow.jobType || '').trim() || 'Full-time',
+    startDate: String(matchedRow.startDate || '').trim() || today,
+    contractBody: String(matchedRow.contractBody || '').trim() || buildBusinessContractBody(matchedRow),
+  }
+
+  await saveAndSendBusinessContract()
 }
 
 const saveAndSendBusinessContract = async () => {
+  if (!canEditBusinessModule('contract-signing')) {
+    showPaymentToast('Your role has view-only access for Contract Signing.', 'warning')
+    return
+  }
   if (isBusinessContractSaving.value) return
-  isBusinessContractSaving.value = true
+
+  const draft = businessContractDraft.value
+  const requiredFields = [
+    ['contract title', draft.contractTitle],
+    ['salary offer', draft.salaryOffer],
+    ['employment type', draft.employmentType],
+    ['start date', draft.startDate],
+    ['contract body', draft.contractBody],
+  ]
+  const missingFields = requiredFields
+    .filter(([, value]) => String(value || '').trim() === '')
+    .map(([label]) => label)
+
+  if (missingFields.length) {
+    showPaymentToast(`Please complete your ${missingFields.join(', ')}.`, 'warning')
+    return
+  }
+
+  if (!draft.applicationId || !draft.applicantId || !draft.jobId) {
+    showPaymentToast('Choose an approved applicant before sending a contract.', 'warning')
+    return
+  }
+
   try {
-    showPaymentToast('Pilot preview only: contract drafting layout is ready for UI review on this branch.', 'success')
+    isBusinessContractSaving.value = true
+    await saveBusinessContractRecord({
+      ...draft,
+      status: 'sent',
+      workspaceOwnerId: draft.workspaceOwnerId || getWorkspaceOwnerDirectoryId(),
+      workspaceOwnerName: String(authUser.value?.name || businessName.value || 'Business Owner').trim(),
+      workspaceOwnerEmail: draft.workspaceOwnerEmail || String(authUser.value?.email || '').trim().toLowerCase(),
+      sentAt: new Date().toISOString(),
+    })
+    showPaymentToast(`Contract sent to ${draft.applicantName}. The applicant can now review and sign it.`, 'success')
+  } catch (error) {
+    showPaymentToast(error instanceof Error ? error.message : 'Unable to send this contract right now.', 'error')
   } finally {
     isBusinessContractSaving.value = false
   }
 }
 
-const completeBusinessContractSigning = async () => {
+const completeBusinessContractSigning = async ({ signatureDataUrl } = {}) => {
+  if (!canEditBusinessModule('contract-signing')) {
+    showPaymentToast('Your role has view-only access for Contract Signing.', 'warning')
+    return
+  }
+
+  const selectedRecord = selectedContractSigningRecord.value
+  if (!selectedRecord) {
+    showPaymentToast('Select a returned contract before countersigning it.', 'warning')
+    return
+  }
+  if (String(selectedRecord?.status || '').trim().toLowerCase() !== 'applicant_signed') {
+    showPaymentToast('Only contracts signed by the applicant can be countersigned by the business.', 'warning')
+    return
+  }
   if (activeBusinessContractSigningId.value) return
-  activeBusinessContractSigningId.value = String(selectedContractSigningRow.value?.id || '').trim()
+
   try {
-    showPaymentToast('Pilot preview only: business countersign action will be enabled in the final live merge.', 'warning')
+    activeBusinessContractSigningId.value = String(selectedRecord.id || '').trim()
+    await signBusinessContractRecord(String(selectedRecord.id || '').trim(), {
+      businessSignatureName: businessContractSignatureName.value || authUser.value?.name || businessName.value,
+      businessSignatureDataUrl: signatureDataUrl,
+    })
+    showPaymentToast(`Contract completed for ${selectedContractSigningRow.value?.name || 'the applicant'}.`, 'success')
+  } catch (error) {
+    showPaymentToast(error instanceof Error ? error.message : 'Unable to countersign this contract right now.', 'error')
   } finally {
     activeBusinessContractSigningId.value = ''
   }
 }
 
+const openBusinessContractDigitalApiSigning = async (contractId) => {
+  const normalizedContractId = String(contractId || '').trim()
+  if (!normalizedContractId || activeBusinessProviderContractId.value) return
+
+  try {
+    activeBusinessProviderContractId.value = normalizedContractId
+    const session = await createContractSigningProviderSession({
+      contractId: normalizedContractId,
+      actorRole: 'business',
+      returnUrl: typeof window !== 'undefined' ? window.location.href : '',
+    })
+    const signingUrl = String(session?.signingUrl || '').trim()
+
+    if (!signingUrl) {
+      throw new Error('No digital signing URL was returned by the provider.')
+    }
+
+    if (typeof window !== 'undefined') {
+      window.open(signingUrl, '_blank', 'noopener,noreferrer')
+    }
+
+    showPaymentToast('Digital signing page opened in a new tab. Finish the signature there, then refresh the API status here.', 'success')
+  } catch (error) {
+    showPaymentToast(error instanceof Error ? error.message : 'Unable to open the digital signing API right now.', 'error')
+  } finally {
+    activeBusinessProviderContractId.value = ''
+  }
+}
+
+const refreshBusinessContractDigitalApiStatus = async (contractId) => {
+  const normalizedContractId = String(contractId || '').trim()
+  if (!normalizedContractId || activeBusinessProviderContractId.value) return
+
+  try {
+    activeBusinessProviderContractId.value = normalizedContractId
+    await syncContractSigningProviderStatus(normalizedContractId)
+    showPaymentToast('Digital signing status refreshed from the provider.', 'success')
+  } catch (error) {
+    showPaymentToast(error instanceof Error ? error.message : 'Unable to refresh the provider status right now.', 'error')
+  } finally {
+    activeBusinessProviderContractId.value = ''
+  }
+}
+
 watch(filteredContractSigningQueueRows, (rows) => {
-  const availableIds = rows.map((row) => String(row?.id || '').trim()).filter(Boolean)
-  if (!availableIds.length) {
-    contractSigningSelectedRowId.value = ''
+  const activeId = String(contractSigningSelectedRowId.value || '').trim()
+  if (rows.some((row) => row.id === activeId)) return
+
+  const firstRow = rows[0] || null
+  contractSigningSelectedRowId.value = String(firstRow?.id || '').trim()
+  if (firstRow) {
+    businessContractDraft.value = buildBusinessContractDraftFromRow(firstRow)
+  } else {
     businessContractDraft.value = createDefaultBusinessContractDraft()
-    return
   }
+}, { immediate: true })
 
-  if (!availableIds.includes(String(contractSigningSelectedRowId.value || '').trim())) {
-    contractSigningSelectedRowId.value = availableIds[0]
+watch(authUser, (user) => {
+  if (!String(businessContractSignatureName.value || '').trim()) {
+    businessContractSignatureName.value = String(user?.name || businessName.value || '').trim()
   }
-
-  restoreSelectedContractSigningDraft()
 }, { immediate: true })
 
 const syncApprovedApplicantProfilesFromApplications = () => {
@@ -7490,8 +7900,8 @@ const rebuildTrainingAssignments = () => {
       const templateCategories = Array.isArray(assignment?.templateCategories) && assignment.templateCategories.length
         ? cloneTrainingAssignmentProgressCategories(assignment.templateCategories)
         : buildTrainingAssignmentSnapshotFromTemplate(selectedTemplate)
-      const stage = hasCompletedBusinessInterviewType(id, 'final')
-        ? 'Final interview completed'
+      const stage = hasCompletedBusinessInterviewType(id)
+        ? 'Interview completed'
         : String(assignment?.stage || 'Assigned training').trim() || 'Assigned training'
 
       return {
@@ -9564,7 +9974,13 @@ const showPaymentToast = (message, tone = 'error', options = {}) => {
     actions,
   })
 
-  const duration = Number.isFinite(options.duration) ? options.duration : (actions.length ? 0 : 2600)
+  const duration = Number.isFinite(options.duration)
+    ? options.duration
+    : actions.length
+      ? 0
+      : tone === 'error'
+        ? 5200
+        : 2600
   if (duration > 0) {
     paymentToastTimeoutId.value = setTimeout(() => {
       assignPaymentToastState()
@@ -10633,7 +11049,9 @@ const recruitmentBindings = createRecruitmentBindings({
   JOB_POSTING_MAX_VACANCIES,
   JOB_POSTING_DISABILITY_TYPES,
   jobPostingDisabilityLabel,
+  jobPostingSelectedDisabilityTypes,
   jobPostingDisabilityTypeNeedsSpecification,
+  setJobPostingDisabilityTypes,
   getJobPostingImpairmentSpecificationPlaceholder,
   JOB_POSTING_LANGUAGE_OPTIONS,
   jobPostingLanguageLabel,
@@ -10698,7 +11116,7 @@ const contractSigningBindings = computed(() => ({
   selectRow: selectContractSigningRow,
   sendContractToApplicant,
   selectedRow: selectedContractSigningRow.value,
-  selectedRecord: null,
+  selectedRecord: selectedContractSigningRecord.value,
   contractDraft: businessContractDraft.value,
   setContractDraftField,
   restoreContractDraft: restoreSelectedContractSigningDraft,
@@ -10708,7 +11126,10 @@ const contractSigningBindings = computed(() => ({
   businessContractSignatureName: businessContractSignatureName.value,
   setBusinessContractSignatureName: (value) => { businessContractSignatureName.value = value },
   activeBusinessContractSigningId: activeBusinessContractSigningId.value,
+  activeBusinessProviderContractId: activeBusinessProviderContractId.value,
   completeBusinessContractSigning,
+  openBusinessContractDigitalApiSigning,
+  refreshBusinessContractDigitalApiStatus,
 }))
 
 const permissionBindings = createPermissionBindings({
@@ -10869,12 +11290,17 @@ const trainingBindings = createTrainingBindings({
   canEditTrainingAssignments,
   assignableTrainingTemplates,
   assignTrainingTemplateToMember,
+  removeAssignedTrainingTemplateFromMember,
   getAssignableTrainingTemplateLabel,
   resolveTrainingTrackingProgressTone,
   isTrainingTrackingDetailView,
   selectedTrainingTrackingAssignment,
   openTrainingTrackingDetail,
   returnToTrainingTrackingTable,
+  isTrainingTrackingCategorySelected,
+  toggleTrainingTrackingCategorySelection,
+  isTrainingTrackingSkillSelected,
+  toggleTrainingTrackingSkillSelection,
   TRAINING_TRACKING_GRADE_SCALE,
   isTrainingTrackingSkillSaving,
   toggleTrainingAssignmentSkillCompletion,
@@ -11060,6 +11486,7 @@ const startBusinessCoreStartupSync = () => {
   startBusinessMemberEmployerSync()
   startWorkspaceJobPostsSync()
   startBusinessJobApplicationsFirestoreSync()
+  startBusinessContractFirestoreSync()
   restoreAdminPlanCatalog()
   restoreBusinessProfileState()
   syncProfileFormFromAuthUser()
@@ -11394,13 +11821,13 @@ watch(() => businessInterviewSchedulingForm.value.selectedJobKey, () => {
   businessInterviewSchedulingForm.value = {
     ...businessInterviewSchedulingForm.value,
     applicationId: '',
-    interviewType: 'initial',
+    interviewType: 'interview',
   }
   businessInterviewSchedulingFormError.value = ''
 })
 
 watch(businessInterviewAvailableInterviewTypeOptions, (options) => {
-  const firstAllowedType = options[0]?.value || 'initial'
+  const firstAllowedType = options[0]?.value || 'interview'
   if (options.some((option) => option.value === businessInterviewSchedulingForm.value.interviewType)) return
 
   businessInterviewSchedulingForm.value = {
@@ -11421,13 +11848,46 @@ watch(trainingTrackingAssignments, (assignments) => {
   const normalizedSelectedId = String(selectedTrainingTrackingAssignmentId.value || '').trim()
   if (!assignments.length) {
     selectedTrainingTrackingAssignmentId.value = ''
+    selectedTrainingTrackingCategoryId.value = ''
+    selectedTrainingTrackingSkillKey.value = ''
     trainingTrackingViewMode.value = 'table'
     trainingTrackingCategoryRemarkDrafts.value = {}
     return
   }
 
-  if (assignments.some((assignment) => String(assignment?.id || '').trim() === normalizedSelectedId)) return
-  selectedTrainingTrackingAssignmentId.value = String(assignments[0]?.id || '').trim()
+  const matchingAssignment = assignments.find((assignment) => String(assignment?.id || '').trim() === normalizedSelectedId) || null
+  if (!matchingAssignment) {
+    selectedTrainingTrackingAssignmentId.value = String(assignments[0]?.id || '').trim()
+    selectedTrainingTrackingCategoryId.value = String(assignments[0]?.templateCategories?.[0]?.id || '').trim()
+    selectedTrainingTrackingSkillKey.value = ''
+    return
+  }
+
+  const normalizedSelectedCategoryId = String(selectedTrainingTrackingCategoryId.value || '').trim()
+  if (!normalizedSelectedCategoryId) {
+    selectedTrainingTrackingCategoryId.value = String(matchingAssignment?.templateCategories?.[0]?.id || '').trim()
+    selectedTrainingTrackingSkillKey.value = ''
+    return
+  }
+
+  const hasSelectedCategory = matchingAssignment.templateCategories.some((category) =>
+    String(category?.id || '').trim() === normalizedSelectedCategoryId)
+  if (!hasSelectedCategory) {
+    selectedTrainingTrackingCategoryId.value = String(matchingAssignment?.templateCategories?.[0]?.id || '').trim()
+    selectedTrainingTrackingSkillKey.value = ''
+    return
+  }
+
+  const normalizedSelectedSkillKey = String(selectedTrainingTrackingSkillKey.value || '').trim()
+  if (!normalizedSelectedSkillKey) return
+
+  const hasSelectedSkill = matchingAssignment.templateCategories.some((category) =>
+    String(category?.id || '').trim() === normalizedSelectedCategoryId
+    && category.skills.some((skill) =>
+      createTrainingTrackingSelectedSkillKey(matchingAssignment.id, category.id, skill.id) === normalizedSelectedSkillKey))
+  if (!hasSelectedSkill) {
+    selectedTrainingTrackingSkillKey.value = ''
+  }
 }, { deep: true, immediate: true })
 
 watch([canViewTrainingTemplateBuilder, canViewTrainingAssignments], () => {
@@ -11541,6 +12001,7 @@ onBeforeUnmount(() => {
   stopBusinessMemberEmployerSync()
   stopWorkspaceJobsSync()
   stopBusinessJobApplicationsSync()
+  stopBusinessContractSync()
   stopBusinessInterviewSchedulesSync()
   stopBusinessPaymentHistorySync()
   stopApplicantAssessmentScoreSync()
@@ -12030,6 +12491,7 @@ onBeforeUnmount(() => {
     </Transition>
 
     <BModals v-bind="modalBindings" />
+    <AppToast :toast="businessWorkspaceToast" @close="closePaymentToast" />
     <BIssueOfferModal
       :is-open="isBusinessIssueOfferOpen"
       :candidate="selectedBusinessIssueOfferCandidate"

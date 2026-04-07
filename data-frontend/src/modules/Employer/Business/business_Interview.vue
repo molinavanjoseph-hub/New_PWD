@@ -113,7 +113,7 @@ const {
                       <div>
                         <span class="business-interview-scheduling__card-kicker">New Schedule</span>
                         <h3>Create Interview Schedule</h3>
-                        <p>Interview approvals, applicant replies, and final results can be connected in the status workspace next.</p>
+                        <p>Interview approvals, applicant replies, and live schedule updates can be connected in the status workspace next.</p>
                       </div>
                     </div>
 
@@ -157,7 +157,7 @@ const {
                         </p>
 
                         <label class="business-interview-scheduling__field">
-                          <span>Interview Type</span>
+                          <span>Interview</span>
                           <select
                             v-model="businessInterviewSchedulingForm.interviewType"
                             :disabled="!businessInterviewSchedulingForm.applicationId"

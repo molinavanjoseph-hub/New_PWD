@@ -6,7 +6,7 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
 } from 'firebase/firestore'
-import { getFunctions } from 'firebase/functions'
+import { connectFunctionsEmulator, getFunctions } from 'firebase/functions'
 import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
@@ -36,5 +36,17 @@ const db = hasExistingApp
 const auth = getAuth(app)
 const cloudFunctions = getFunctions(app, CLOUD_FUNCTIONS_REGION)
 const storage = getStorage(app)
+
+const shouldUseFunctionsEmulator = import.meta.env.DEV
+  && String(import.meta.env.VITE_USE_FUNCTIONS_EMULATOR || '').toLowerCase() === 'true'
+
+if (shouldUseFunctionsEmulator) {
+  const emulatorHost = String(import.meta.env.VITE_FUNCTIONS_EMULATOR_HOST || '127.0.0.1').trim() || '127.0.0.1'
+  const emulatorPort = Number.parseInt(String(import.meta.env.VITE_FUNCTIONS_EMULATOR_PORT || '5001'), 10)
+
+  if (Number.isFinite(emulatorPort) && emulatorPort > 0) {
+    connectFunctionsEmulator(cloudFunctions, emulatorHost, emulatorPort)
+  }
+}
 
 export { app, auth, cloudFunctions, CLOUD_FUNCTIONS_REGION, db, FIREBASE_PROJECT_ID, storage }

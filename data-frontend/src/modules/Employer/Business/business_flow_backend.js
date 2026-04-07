@@ -6,6 +6,7 @@ import {
 import { saveBusinessInterviewSchedule } from '@/lib/business_interviews'
 import {
   deleteBusinessAssessmentAssignmentRecord,
+  deleteBusinessTrainingAssignmentRecord,
   saveBusinessAssessmentAssignmentRecord,
   saveBusinessTrainingAssignmentRecord,
 } from '@/lib/business_workspace_records'
@@ -165,12 +166,7 @@ export const completeBusinessInterviewScheduleProcess = async ({
       targetSchedule.applicationId,
       buildBusinessInterviewApplicationPayload(nextScheduleRecord),
     )
-    showPaymentToast(
-      String(targetSchedule.interviewType || '').trim().toLowerCase() === 'initial'
-        ? 'Initial interview marked as completed. Final interview scheduling is now available for this applicant.'
-        : 'Final interview marked as completed.',
-      'success',
-    )
+    showPaymentToast('Interview marked as completed.', 'success')
   } catch (error) {
     showPaymentToast(getErrorMessage(error, 'Unable to mark this interview as completed right now.'), 'error')
   }
@@ -374,7 +370,7 @@ export const createBusinessInterviewScheduleProcess = async ({
   if (!businessInterviewAvailableInterviewTypeOptions.value.some(
     (option) => option.value === businessInterviewSchedulingForm.value.interviewType,
   )) {
-    businessInterviewSchedulingFormError.value = 'Invalid interview type for this applicant stage.'
+    businessInterviewSchedulingFormError.value = 'Invalid interview selection for this applicant.'
     return
   }
 
@@ -386,11 +382,10 @@ export const createBusinessInterviewScheduleProcess = async ({
 
   const duplicateSchedule = businessInterviewSchedules.value.find((entry) =>
     entry.applicationId === selectedApplicant.id
-    && entry.interviewType === businessInterviewSchedulingForm.value.interviewType
     && normalizeBusinessInterviewScheduleStatus(entry.scheduleStatus) !== 'cancelled',
   )
   if (duplicateSchedule) {
-    businessInterviewSchedulingFormError.value = `A scheduled ${businessInterviewSchedulingForm.value.interviewType} interview already exists for this applicant.`
+    businessInterviewSchedulingFormError.value = 'A scheduled interview already exists for this applicant.'
     return
   }
 
@@ -515,6 +510,43 @@ export const assignTrainingTemplateToMemberProcess = async ({
   }
 }
 
+export const removeAssignedTrainingTemplateFromMemberProcess = async ({
+  memberId,
+  canEditTrainingAssignments,
+  trainingTemplateAssignments,
+  trainingAssignmentRecords,
+  showPaymentToast,
+  removeLocalTrainingAssignmentRecord,
+}) => {
+  if (!canEditTrainingAssignments.value) {
+    showPaymentToast('Your role has view-only access for Assign Templates.', 'warning')
+    return
+  }
+
+  const normalizedMemberId = String(memberId || '').trim()
+  if (!normalizedMemberId) return
+
+  const targetMember = trainingTemplateAssignments.value.find((member) =>
+    String(member?.id || member?.applicationId || '').trim() === normalizedMemberId)
+  if (!targetMember) return
+
+  const savedAssignmentRecord = trainingAssignmentRecords.value.find((record) =>
+    String(record?.id || record?.memberId || record?.applicationId || '').trim() === normalizedMemberId)
+
+  try {
+    if (savedAssignmentRecord) {
+      await deleteBusinessTrainingAssignmentRecord(
+        String(savedAssignmentRecord.id || savedAssignmentRecord.memberId || savedAssignmentRecord.applicationId || normalizedMemberId).trim(),
+      )
+    }
+
+    removeLocalTrainingAssignmentRecord(normalizedMemberId)
+    showPaymentToast(`Training template removed from ${targetMember.name}.`, 'success')
+  } catch (error) {
+    showPaymentToast(getErrorMessage(error, 'Unable to remove this training template right now.'), 'error')
+  }
+}
+
 export const toggleTrainingAssignmentSkillCompletionProcess = async ({
   assignmentId,
   categoryId,
@@ -634,11 +666,6 @@ export const setTrainingAssignmentSkillGradeProcess = async ({
     ? targetCategory.skills.find((skill) => String(skill?.id || '').trim() === String(skillId || '').trim())
     : null
 
-  if (!targetSkill?.completed) {
-    showPaymentToast('Mark this skill as completed before assigning a grade.', 'warning')
-    return
-  }
-
   const workspaceOwnerId = getWorkspaceOwnerDirectoryId()
   if (!workspaceOwnerId) {
     showPaymentToast('Refresh the page and sign in again before updating skill grades.', 'error')
@@ -657,6 +684,8 @@ export const setTrainingAssignmentSkillGradeProcess = async ({
           String(skill?.id || '').trim() === String(skillId || '').trim()
             ? {
               ...skill,
+              completed: true,
+              completedAt: skill?.completedAt || new Date().toISOString(),
               grade: normalizedGrade,
             }
             : skill),

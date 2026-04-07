@@ -38,6 +38,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  compact: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['open-personalization', 'open-settings', 'logout', 'open-notification', 'toggle-sidebar'])
@@ -109,6 +113,17 @@ const persistSeenNotificationIds = () => {
 }
 
 const normalizeNotificationId = (value) => String(value || '').trim()
+const resolveNotificationSeenKey = (notification = {}) => {
+  const notificationId = normalizeNotificationId(notification?.id)
+  const createdAtValue = resolveNotificationTimestamp(
+    notification?.createdAtValue
+    || notification?.createdAt
+    || notification?.created_at
+    || notification?.timestamp,
+  )
+
+  return notificationId ? `${notificationId}::${createdAtValue || 0}` : ''
+}
 const getNotificationSectionLabel = (value) => {
   const normalizedValue = String(value || '').trim().toLowerCase()
   if (normalizedValue === 'applications') return 'Applications'
@@ -166,11 +181,14 @@ const normalizedNotifications = computed(() =>
       return {
         ...item,
         id: notificationId,
+        seenKey: resolveNotificationSeenKey({ id: notificationId, createdAtValue }),
         message: String(item?.message || item?.copy || '').trim(),
         createdAtValue,
         timeLabel,
         sentLabel: formatNotificationSentLabel(createdAtValue, timeLabel),
-        isUnread: notificationId ? !seenNotificationIds.value.includes(notificationId) : true,
+        isUnread: notificationId
+          ? !seenNotificationIds.value.includes(resolveNotificationSeenKey({ id: notificationId, createdAtValue }))
+          : true,
         sectionLabel: getNotificationSectionLabel(item?.section),
         iconClass: getNotificationIconClass(item?.section, item?.tone),
       }
@@ -215,7 +233,7 @@ const titleSummary = computed(() => {
 
 const markNotificationsAsSeen = (items = normalizedNotifications.value) => {
   const notificationIds = (Array.isArray(items) ? items : [])
-    .map((item) => normalizeNotificationId(item?.id))
+    .map((item) => resolveNotificationSeenKey(item))
     .filter(Boolean)
 
   if (!notificationIds.length) return
@@ -278,19 +296,10 @@ watch(
   { immediate: true },
 )
 
-watch(
-  [isNotificationOpen, normalizedNotifications],
-  ([isOpen, notifications]) => {
-    if (!isOpen) return
-    markNotificationsAsSeen(notifications)
-  },
-  { deep: true },
-)
-
 </script>
 
 <template>
-  <header class="applicant-navbar">
+  <header class="applicant-navbar" :class="{ 'applicant-navbar--compact': compact }">
     <div class="applicant-navbar__left">
       <div class="applicant-navbar__topline">
         <button
@@ -313,7 +322,7 @@ watch(
         </div>
       </div>
 
-      <div class="applicant-navbar__title-block">
+      <div v-if="!compact" class="applicant-navbar__title-block">
         <p class="applicant-navbar__eyebrow">Applicant Workspace</p>
         <h1 class="applicant-navbar__title">{{ title }}</h1>
         <p class="applicant-navbar__subtitle">{{ titleSummary }}</p>
@@ -364,7 +373,7 @@ watch(
             <div v-if="normalizedNotifications.length" class="applicant-navbar__notification-list">
               <button
                 v-for="item in normalizedNotifications"
-                :key="item.id"
+                :key="item.seenKey || item.id"
                 class="applicant-navbar__notification-item"
                 :class="[{ 'is-unread': item.isUnread }, `is-${item.tone || 'neutral'}`]"
                 :data-icon="item.section === 'applications' ? 'AP' : item.section === 'interviews' ? 'IN' : item.section === 'technical-assessment' ? 'TA' : 'UP'"

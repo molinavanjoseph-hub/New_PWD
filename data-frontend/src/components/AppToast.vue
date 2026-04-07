@@ -30,6 +30,8 @@ const toastPosition = computed(() => {
   const normalizedPosition = String(props.position || 'top-right').trim().toLowerCase()
   return ['top-right', 'bottom-left'].includes(normalizedPosition) ? normalizedPosition : 'top-right'
 })
+
+const toastActions = computed(() => Array.isArray(props.toast?.actions) ? props.toast.actions : [])
 </script>
 
 <template>
@@ -47,6 +49,18 @@ const toastPosition = computed(() => {
       <div class="app-toast__copy">
         <strong>{{ toast.title || (toastKind === 'error' ? 'Error' : 'Notice') }}</strong>
         <span>{{ toast.text }}</span>
+        <div v-if="toastActions.length" class="app-toast__actions">
+          <button
+            v-for="(action, index) in toastActions"
+            :key="`${action.label || 'action'}-${index}`"
+            type="button"
+            class="app-toast__action"
+            :class="`app-toast__action--${String(action?.variant || 'secondary').trim().toLowerCase() || 'secondary'}`"
+            @click="action?.onClick?.()"
+          >
+            {{ action.label || 'Confirm' }}
+          </button>
+        </div>
       </div>
       <button type="button" class="app-toast__close" aria-label="Close notification" @click="emit('close')">
         <i class="bi bi-x-lg" />
@@ -142,6 +156,49 @@ const toastPosition = computed(() => {
   color: #53675d;
   font-size: 0.82rem;
   line-height: 1.5;
+}
+
+.app-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-top: 0.5rem;
+}
+
+.app-toast__action {
+  min-height: 2.1rem;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid rgba(212, 224, 217, 0.98);
+  border-radius: 0.8rem;
+  background: #ffffff;
+  color: #173126;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.app-toast__action:hover {
+  transform: translateY(-1px);
+}
+
+.app-toast__action--primary {
+  border-color: #1d6a45;
+  background: linear-gradient(180deg, #2e9b63 0%, #247d51 100%);
+  color: #ffffff;
+}
+
+.app-toast__action--secondary {
+  border-color: rgba(212, 224, 217, 0.98);
+  background: #f8fbf9;
+  color: #456457;
+}
+
+.app-toast__action--danger {
+  border-color: rgba(240, 199, 199, 0.98);
+  background: #fff5f5;
+  color: #b42318;
 }
 
 .app-toast__close {

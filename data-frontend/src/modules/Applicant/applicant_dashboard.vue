@@ -33,6 +33,14 @@ import {
 } from '@/lib/apply_jobs'
 import { saveBusinessInterviewSchedule, subscribeToApplicantInterviewSchedules } from '@/lib/business_interviews'
 import {
+  createContractSigningProviderSession,
+  markApplicantContractViewed,
+  signApplicantContractRecord,
+  subscribeToApplicantContracts,
+  syncContractSigningProviderStatus,
+} from '@/lib/contract_signing'
+import { saveJobOfferRecord, subscribeToApplicantJobOffers } from '@/lib/job_offers'
+import {
   saveBusinessAssessmentAssignmentRecord,
   subscribeToApplicantTrainingAssignments,
   subscribeToApplicantAssessmentAssignments,
@@ -102,9 +110,11 @@ const applicantApplicationStats = ref({
 })
 const liveApplicantApplications = ref([])
 const selectedApplicantApplicationIds = ref([])
+const liveApplicantJobOffers = ref([])
 const liveApplicantInterviewSchedules = ref([])
 const liveApplicantAssessmentAssignments = ref([])
 const liveApplicantTrainingAssignments = ref([])
+const liveApplicantContracts = ref([])
 const applicantJobDocumentStates = ref({})
 const activeApplicantInterviewActionId = ref('')
 const isApplicantApplicationDeleteSubmitting = ref(false)
@@ -148,6 +158,8 @@ const activeApplicantContractId = ref('')
 const applicantContractSignatureName = ref('')
 const applicantContractConsentChecked = ref(false)
 const activeApplicantContractSubmittingId = ref('')
+const isApplicantContractSubmitting = ref(false)
+const activeApplicantProviderContractId = ref('')
 const isApplicantSettingsModalOpen = ref(false)
 const applicantSettingsReturnSection = ref('find-jobs')
 let banPollId
@@ -158,9 +170,11 @@ let applicantApplicationFollowupToastTimerId = null
 let applicantApplySuccessTimerId = null
 let stopPublicJobsSubscription = null
 let stopApplicantApplicationsSubscription = null
+let stopApplicantJobOffersSubscription = null
 let stopApplicantInterviewSchedulesSubscription = null
 let stopApplicantAssessmentAssignmentsSubscription = null
 let stopApplicantTrainingAssignmentsSubscription = null
+let stopApplicantContractsSubscription = null
 let stopApplicantJobDocumentStatesSubscription = null
 let stopAuthUserProfileSync = null
 let applicantAccessRealtimeTimerId = null
@@ -1082,7 +1096,7 @@ const resolveApplicantConfirmedScheduleAt = (record = {}, selectedValue = '') =>
 const upsertLiveApplicantInterviewSchedule = (record = {}) => {
   const normalizedId = String(record?.id || '').trim()
   const normalizedApplicationId = String(record?.applicationId || record?.application_id || '').trim()
-  const normalizedInterviewType = String(record?.interviewType || record?.interview_type || 'initial').trim().toLowerCase() || 'initial'
+  const normalizedInterviewType = 'interview'
 
   if (!normalizedId && !normalizedApplicationId) return
 
@@ -1098,7 +1112,6 @@ const upsertLiveApplicantInterviewSchedule = (record = {}) => {
     if (normalizedId && entryId) return entryId === normalizedId
 
     return String(entry?.applicationId || entry?.application_id || '').trim() === normalizedApplicationId
-      && (String(entry?.interviewType || entry?.interview_type || 'initial').trim().toLowerCase() || 'initial') === normalizedInterviewType
   })
 
   if (existingIndex >= 0) {
@@ -1110,8 +1123,7 @@ const upsertLiveApplicantInterviewSchedule = (record = {}) => {
   liveApplicantInterviewSchedules.value = [nextRecord, ...liveApplicantInterviewSchedules.value]
 }
 
-const formatApplicantInterviewTypeLabel = (value) =>
-  String(value || 'initial').trim().toLowerCase() === 'final' ? 'Final Interview' : 'Initial Interview'
+const formatApplicantInterviewTypeLabel = () => 'Interview'
 
 const formatApplicantInterviewModeLabel = (value) =>
   String(value || 'in-person').trim().toLowerCase() === 'online' ? 'Online interview' : 'In-person interview'
@@ -1199,10 +1211,10 @@ const applicantInterviewPageRows = computed(() => {
     const applicationId = String(record?.applicationId || record?.application_id || applicationRecord?.id || '').trim()
     if (!applicationId || !activeApplicantApplicationIdSet.value.has(applicationId)) return
 
-    const interviewType = String(record?.interviewType || record?.interview_type || 'initial').trim().toLowerCase() || 'initial'
+    const interviewType = 'interview'
     const recordId = String(record?.id || '').trim()
     const rowKey = `${applicationId || recordId}:${interviewType}`
-    if (!rowKey || rowKey === ':initial') return
+    if (!rowKey || rowKey === ':interview') return
 
     const nextRow = {
       ...record,
@@ -1269,7 +1281,7 @@ const latestApplicantInterviewByApplicationAndType = computed(() => {
 
   liveApplicantInterviewSchedules.value.forEach((record) => {
     const applicationId = String(record?.applicationId || record?.application_id || '').trim()
-    const interviewType = String(record?.interviewType || record?.interview_type || 'initial').trim().toLowerCase() || 'initial'
+    const interviewType = 'interview'
     if (!applicationId || !activeApplicantApplicationIdSet.value.has(applicationId)) return
 
     const key = `${applicationId}:${interviewType}`
@@ -2141,7 +2153,7 @@ const formatApplicantNotificationTime = (value) => {
 }
 
 const buildApplicantInterviewFallbackRecord = (record = {}) => {
-  const interviewType = String(record?.interviewType || record?.interview_type || 'initial').trim().toLowerCase() || 'initial'
+  const interviewType = 'interview'
   const scheduledAt = String(
     record?.interviewDate
       || record?.interview_date
@@ -2199,13 +2211,14 @@ const getApplicantInterviewRecordForApplication = (record, interviewType = '') =
   if (!applicationId) return buildApplicantInterviewFallbackRecord(record)
 
   if (interviewType) {
+    const normalizedInterviewType = 'interview'
     const matchedRecord = latestApplicantInterviewByApplicationAndType.value.get(
-      `${applicationId}:${String(interviewType || '').trim().toLowerCase()}`,
+      `${applicationId}:${normalizedInterviewType}`,
     ) || null
     if (matchedRecord) return matchedRecord
 
     const fallbackRecord = buildApplicantInterviewFallbackRecord(record)
-    return String(fallbackRecord?.interviewType || '').trim().toLowerCase() === String(interviewType || '').trim().toLowerCase()
+    return String(fallbackRecord?.interviewType || '').trim().toLowerCase() === normalizedInterviewType
       ? fallbackRecord
       : null
   }
@@ -2233,7 +2246,7 @@ const getApplicantInterviewTimelineToneFromRecord = (record = {}) => {
   return 'info'
 }
 
-const getApplicantInterviewTimelineMeta = (record = {}, interviewType = 'initial') => {
+const getApplicantInterviewTimelineMeta = (record = {}, interviewType = 'interview') => {
   const typeLabel = formatApplicantInterviewTypeLabel(record?.interviewType || interviewType)
   const scheduleLabel = formatApplicantInterviewScheduleLabel(record?.scheduledAt || record?.scheduled_at)
   const responseStatus = normalizeApplicantInterviewResponseState(record)
@@ -2349,12 +2362,16 @@ const buildApplicantApplicationTimeline = (record) => {
   const discontinuedReason = getApplicationDiscontinuedReason(record)
   const linkedAssessment = latestApplicantAssessmentAssignmentByApplication.value.get(String(record?.id || '').trim()) || null
   const linkedTrainingAssignment = latestApplicantTrainingAssignmentByApplication.value.get(String(record?.id || '').trim()) || null
-  const initialInterview = getApplicantInterviewRecordForApplication(record, 'initial')
-  const finalInterview = getApplicantInterviewRecordForApplication(record, 'final')
+  const interviewRecord = getApplicantInterviewRecordForApplication(record, 'interview')
   const hasAdvancedPastApplicationStage = isInterviewApplicationStatus(normalizedStatus)
   const hasApprovedApplication = isApprovedApplicationStatus(normalizedStatus)
-  const hasCompletedJobOffer = ['accepted', 'hired'].includes(normalizedStatus)
+  const offerStatus = normalizeApplicantJobOfferStatus(record)
+  const linkedContract = getApplicantLiveContractRecord(record)
+  const contractStatus = normalizeApplicantContractStatus(linkedContract)
+  const hasCompletedJobOffer = isApplicantJobOfferAcceptedStatus(offerStatus) || ['accepted', 'hired'].includes(normalizedStatus)
+  const hasRejectedJobOffer = isApplicantJobOfferRejectedStatus(offerStatus)
   const hasRejectedApplication = isRejectedApplicationStatus(normalizedStatus)
+  const hasPendingJobOffer = isApplicantJobOfferPendingStatus(offerStatus)
   const applicationTone = isApprovedApplicationStatus(normalizedStatus)
     ? 'success'
     : isRejectedApplicationStatus(normalizedStatus)
@@ -2409,36 +2426,93 @@ const buildApplicantApplicationTimeline = (record) => {
   const trainingProgressStatus = String(linkedTrainingAssignment?.progressStatus || '').trim().toLowerCase()
   const hasCompletedTrainingMonitoring = Boolean(linkedTrainingAssignment?.trainingCompletedAt)
     || trainingProgressStatus === 'completed'
-  const hasCompletedFinalInterview = normalizeApplicantInterviewScheduleState(
-    finalInterview?.scheduleStatus || finalInterview?.schedule_status,
+  const hasCompletedInterview = normalizeApplicantInterviewScheduleState(
+    interviewRecord?.scheduleStatus || interviewRecord?.schedule_status,
   ) === 'completed'
   const jobOfferLabel = hasCompletedJobOffer
     ? 'Offer Accepted'
-    : hasRejectedApplication
-      ? 'Job Offer Closed'
+    : hasRejectedJobOffer
+      ? 'Offer Rejected'
+      : hasRejectedApplication
+        ? 'Job Offer Closed'
       : isDiscontinued
         ? 'Job Offer Closed'
+        : hasPendingJobOffer
+          ? 'Job Offer Pending'
         : hasApprovedApplication
           ? 'Job Offer Pending'
         : 'Job Offer'
   const jobOfferTone = hasCompletedJobOffer
     ? 'success'
-    : hasRejectedApplication
+    : hasRejectedJobOffer || hasRejectedApplication
       ? 'danger'
       : isDiscontinued
         ? 'muted'
         : 'warning'
   const jobOfferMeta = hasCompletedJobOffer
-    ? 'Your application moved to the job offer stage and has already been accepted.'
+    ? 'Your job offer was accepted. The next step is contract signing from the business owner.'
+    : hasRejectedJobOffer
+      ? String(record?.jobOfferApplicantResponseNote || record?.job_offer_applicant_response_note || '').trim() || 'You rejected this job offer.'
     : hasRejectedApplication
       ? rejectionReason || 'No job offer was issued for this application.'
       : isDiscontinued
         ? 'Job offer will not continue because this application was discontinued.'
+        : hasPendingJobOffer
+          ? 'A job offer is waiting for your response.'
         : hasApprovedApplication
           ? 'Your application was approved, but no formal job offer has been sent yet.'
-        : hasCompletedFinalInterview
-          ? 'Final interview completed. Waiting for the business owner to send a job offer.'
-          : 'Job offer becomes available after the final interview stage.'
+        : hasCompletedInterview
+          ? 'Interview completed. Waiting for the business owner to send a job offer.'
+          : 'Job offer becomes available after the interview stage.'
+  const contractLabel = linkedContract
+    ? contractStatus === 'completed'
+      ? 'Contract Completed'
+      : contractStatus === 'applicant_signed'
+        ? 'Contract Signed'
+        : contractStatus === 'sent'
+          ? 'Contract Ready to Sign'
+          : 'Contract In Progress'
+    : hasRejectedJobOffer || hasRejectedApplication
+      ? 'Contract Closed'
+      : isDiscontinued
+        ? 'Contract Closed'
+        : hasCompletedJobOffer
+          ? 'Contract Pending'
+          : 'Contract Signing'
+  const contractTone = linkedContract
+    ? contractStatus === 'completed'
+      ? 'success'
+      : contractStatus === 'applicant_signed'
+        ? 'info'
+        : contractStatus === 'sent'
+          ? 'warning'
+          : 'muted'
+    : hasRejectedJobOffer || hasRejectedApplication
+      ? 'danger'
+      : isDiscontinued
+        ? 'muted'
+        : hasCompletedJobOffer
+          ? 'warning'
+          : 'muted'
+  const contractMeta = linkedContract
+    ? contractStatus === 'completed'
+      ? 'Both you and the business owner signed the contract.'
+      : contractStatus === 'applicant_signed'
+        ? 'You already signed the contract. Waiting for the business owner to countersign it.'
+        : contractStatus === 'sent'
+          ? 'The business owner sent your contract. Review and sign it from the Contracts section.'
+          : 'Your contract record is being prepared.'
+    : hasRejectedJobOffer
+      ? 'Contract signing will not continue because you rejected the job offer.'
+    : hasRejectedApplication
+      ? rejectionReason || 'Contract signing was closed for this application.'
+    : isDiscontinued
+      ? 'Contract signing will not continue because this application was discontinued.'
+      : hasCompletedJobOffer
+        ? 'Waiting for the business owner to send your contract.'
+        : hasPendingJobOffer
+          ? 'Contract signing becomes available after you respond to the job offer.'
+          : 'Contract signing becomes available after the job offer stage.'
   const trainingLabel = linkedTrainingAssignment
     ? hasCompletedTrainingMonitoring
       ? 'Training Completed'
@@ -2449,6 +2523,12 @@ const buildApplicantApplicationTimeline = (record) => {
     ? hasCompletedTrainingMonitoring
       ? 'Training monitoring was completed by the business owner.'
       : 'Training has been assigned. Waiting for the business owner to finish training monitoring.'
+    : linkedContract && contractStatus !== 'completed'
+      ? 'Training starts after the contract signing step is completed.'
+    : linkedContract && contractStatus === 'completed'
+      ? 'Contract completed. Waiting for training assignment.'
+    : hasRejectedJobOffer
+      ? 'Training will not continue because you rejected the job offer.'
     : isDiscontinued
       ? 'Training will not continue because this application was discontinued.'
       : 'Training not assigned yet.'
@@ -2473,7 +2553,7 @@ const buildApplicantApplicationTimeline = (record) => {
           : isDiscontinued
             ? discontinuedReason
           : hasAdvancedPastApplicationStage
-            ? 'Your application passed the initial review and moved forward in the hiring process.'
+            ? 'Your application moved forward in the hiring process.'
           : 'Applied and waiting for approval.',
     },
     {
@@ -2483,30 +2563,26 @@ const buildApplicantApplicationTimeline = (record) => {
       meta: technicalMeta,
     },
     {
-      id: `initial-interview-${String(record?.id || '').trim()}`,
-      label: initialInterview ? formatApplicantInterviewStatusLabelFromRecord(initialInterview) : 'Initial Interview',
-      tone: initialInterview ? getApplicantInterviewTimelineToneFromRecord(initialInterview) : isDiscontinued ? 'muted' : 'warning',
-      meta: initialInterview
-        ? getApplicantInterviewTimelineMeta(initialInterview, 'initial')
+      id: `interview-${String(record?.id || '').trim()}`,
+      label: interviewRecord ? formatApplicantInterviewStatusLabelFromRecord(interviewRecord) : 'Interview',
+      tone: interviewRecord ? getApplicantInterviewTimelineToneFromRecord(interviewRecord) : isDiscontinued ? 'muted' : 'warning',
+      meta: interviewRecord
+        ? getApplicantInterviewTimelineMeta(interviewRecord, 'interview')
         : isDiscontinued
-          ? 'Initial interview will not continue because this application was discontinued.'
-          : 'Initial interview not scheduled yet.',
-    },
-    {
-      id: `final-interview-${String(record?.id || '').trim()}`,
-      label: finalInterview ? formatApplicantInterviewStatusLabelFromRecord(finalInterview) : 'Final Interview',
-      tone: finalInterview ? getApplicantInterviewTimelineToneFromRecord(finalInterview) : isDiscontinued ? 'muted' : 'warning',
-      meta: finalInterview
-        ? getApplicantInterviewTimelineMeta(finalInterview, 'final')
-        : isDiscontinued
-          ? 'Final interview will not continue because this application was discontinued.'
-          : 'Final interview not scheduled yet.',
+          ? 'Interview will not continue because this application was discontinued.'
+          : 'Interview not scheduled yet.',
     },
     {
       id: `job-offer-${String(record?.id || '').trim()}`,
       label: jobOfferLabel,
       tone: jobOfferTone,
       meta: jobOfferMeta,
+    },
+    {
+      id: `contract-signing-${String(record?.id || '').trim()}`,
+      label: contractLabel,
+      tone: contractTone,
+      meta: contractMeta,
     },
     {
       id: `training-${String(record?.id || '').trim()}`,
@@ -2518,55 +2594,67 @@ const buildApplicantApplicationTimeline = (record) => {
 }
 
 const mapApplicantApplicationRecord = (record) => {
-  const title = getApplicationJobTitle(record)
+  const normalizedRecord = hydrateApplicantApplicationWithLiveJobOffer(record)
+  const title = getApplicationJobTitle(normalizedRecord)
   const company = String(
-    record?.company_name
-      || record?.companyName
-      || record?.employer_name
-      || record?.employerName
-      || record?.business_name
-      || record?.businessName
-      || record?.employer_profile?.company_name
-      || getApplicationJobSnapshot(record)?.company_name
+    normalizedRecord?.company_name
+      || normalizedRecord?.companyName
+      || normalizedRecord?.employer_name
+      || normalizedRecord?.employerName
+      || normalizedRecord?.business_name
+      || normalizedRecord?.businessName
+      || normalizedRecord?.employer_profile?.company_name
+      || getApplicationJobSnapshot(normalizedRecord)?.company_name
       || 'Company'
   ).trim()
-  const rejectionReason = String(record?.rejectionReason || record?.rejection_reason || '').trim()
-  const normalizedStatus = normalizeApplicationStatus(record)
+  const rejectionReason = String(normalizedRecord?.rejectionReason || normalizedRecord?.rejection_reason || '').trim()
+  const normalizedStatus = normalizeApplicationStatus(normalizedRecord)
   const isDiscontinued = isDiscontinuedApplicationStatus(normalizedStatus)
-  const discontinuedReason = isDiscontinued ? getApplicationDiscontinuedReason(record) : ''
-  const latestInterview = getApplicantInterviewRecordForApplication(record)
+  const discontinuedReason = isDiscontinued ? getApplicationDiscontinuedReason(normalizedRecord) : ''
+  const latestInterview = getApplicantInterviewRecordForApplication(normalizedRecord)
+  const jobOfferState = getApplicantJobOfferState(normalizedRecord)
+  const shouldUseJobOfferState = Boolean(jobOfferState)
+    && ['success', 'danger'].includes(String(jobOfferState?.tone || '').trim().toLowerCase())
   const interviewStatusLabel = latestInterview ? formatApplicantInterviewStatusLabelFromRecord(latestInterview) : ''
   const interviewStatusTone = latestInterview ? getApplicantInterviewStatusToneFromRecord(latestInterview) : ''
   const latestActivityValue = Math.max(
-    getApplicationStatusTimestamp(record),
-    getApplicantAssessmentTimestamp(latestApplicantAssessmentAssignmentByApplication.value.get(String(record?.id || '').trim()) || {}),
+    getApplicationStatusTimestamp(normalizedRecord),
+    getApplicantAssessmentTimestamp(latestApplicantAssessmentAssignmentByApplication.value.get(String(normalizedRecord?.id || '').trim()) || {}),
     getApplicantInterviewRecordActivityTime(latestInterview || {}),
   )
 
   return {
-    id: String(record?.id || `${title}-${company}-${Date.now()}`),
-    jobId: String(record?.jobId || record?.job_id || '').trim(),
+    id: String(normalizedRecord?.id || `${title}-${company}-${Date.now()}`),
+    jobId: String(normalizedRecord?.jobId || normalizedRecord?.job_id || '').trim(),
     title,
     company,
-    logoUrl: getApplicationBusinessLogoUrl(record),
-    location: getApplicationLocationLabel(record),
-    jobType: getApplicationTypeLabel(record),
-    salaryLabel: getApplicationSalaryLabel(record),
-    disabilityLabel: getApplicationDisabilityLabel(record),
-    submittedAtLabel: formatApplicationDate(record),
-    submittedAtValue: getApplicationTimestamp(record),
-    statusLabel: isDiscontinued ? 'Discontinued' : interviewStatusLabel || formatApplicationStatusLabel(record),
-    statusTone: isDiscontinued ? 'danger' : interviewStatusTone || formatApplicationStatusTone(record),
-    statusDescription: resolveApplicationStatusDescription(record),
+    logoUrl: getApplicationBusinessLogoUrl(normalizedRecord),
+    location: getApplicationLocationLabel(normalizedRecord),
+    jobType: getApplicationTypeLabel(normalizedRecord),
+    salaryLabel: getApplicationSalaryLabel(normalizedRecord),
+    disabilityLabel: getApplicationDisabilityLabel(normalizedRecord),
+    submittedAtLabel: formatApplicationDate(normalizedRecord),
+    submittedAtValue: getApplicationTimestamp(normalizedRecord),
+    statusLabel: isDiscontinued
+      ? 'Discontinued'
+      : shouldUseJobOfferState
+        ? jobOfferState.label
+        : interviewStatusLabel || formatApplicationStatusLabel(normalizedRecord),
+    statusTone: isDiscontinued
+      ? 'danger'
+      : shouldUseJobOfferState
+        ? jobOfferState.tone
+        : interviewStatusTone || formatApplicationStatusTone(normalizedRecord),
+    statusDescription: shouldUseJobOfferState ? jobOfferState.summary : resolveApplicationStatusDescription(normalizedRecord),
     rejectionReason,
     isDiscontinued,
     discontinuedReason,
     lastUpdatedValue: latestActivityValue,
     lastUpdatedLabel: latestActivityValue
       ? new Date(latestActivityValue).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
-      : formatApplicationStatusDate(record),
+      : formatApplicationStatusDate(normalizedRecord),
     sourceLabel: 'Live Firestore',
-    timelineItems: buildApplicantApplicationTimeline(record),
+    timelineItems: buildApplicantApplicationTimeline(normalizedRecord),
   }
 }
 
@@ -2719,7 +2807,7 @@ const applicantInboxItems = computed(() => {
     .map((record) => {
       const companyLabel = String(record?.workspaceOwnerName || record?.workspace_owner_name || 'Employer').trim() || 'Employer'
       const jobTitle = String(record?.jobTitle || record?.job_title || 'Applied Job').trim() || 'Applied Job'
-      const interviewTypeLabel = formatApplicantInterviewTypeLabel(record?.interviewType || record?.interview_type || 'initial')
+      const interviewTypeLabel = formatApplicantInterviewTypeLabel(record?.interviewType || record?.interview_type || 'interview')
       const interviewStatusLabel = formatApplicantInterviewStatusLabelFromRecord(record)
       const createdAtValue = getApplicantInterviewRecordActivityTime(record)
 
@@ -2953,19 +3041,144 @@ const resolveApplicantJobApplicationState = (job) => {
   }
 }
 
-const normalizeApplicantJobOfferStatus = (record = {}) =>
-  String(record?.jobOfferStatus || record?.job_offer_status || '').trim().toLowerCase()
+const latestApplicantJobOfferByApplication = computed(() => {
+  const lookup = new Map()
+
+  liveApplicantJobOffers.value.forEach((record) => {
+    const applicationId = String(record?.applicationId || record?.application_id || record?.id || '').trim()
+    if (!applicationId) return
+
+    const existingRecord = lookup.get(applicationId)
+    const existingTime = existingRecord
+      ? Date.parse(String(existingRecord?.updatedAt || existingRecord?.updated_at || existingRecord?.createdAt || existingRecord?.created_at || '').trim()) || 0
+      : 0
+    const nextTime = Date.parse(String(record?.updatedAt || record?.updated_at || record?.createdAt || record?.created_at || '').trim()) || 0
+
+    if (!existingRecord || nextTime >= existingTime) {
+      lookup.set(applicationId, record)
+    }
+  })
+
+  return lookup
+})
+
+const getApplicantContractActivityTimestamp = (record = {}) =>
+  Math.max(
+    Date.parse(String(record?.updatedAt || record?.updated_at || '').trim()) || 0,
+    Date.parse(String(record?.completedAt || record?.completed_at || '').trim()) || 0,
+    Date.parse(String(record?.businessSignedAt || record?.business_signed_at || '').trim()) || 0,
+    Date.parse(String(record?.applicantSignedAt || record?.applicant_signed_at || '').trim()) || 0,
+    Date.parse(String(record?.sentAt || record?.sent_at || '').trim()) || 0,
+    Date.parse(String(record?.createdAt || record?.created_at || '').trim()) || 0,
+  )
+
+const latestApplicantContractByApplication = computed(() => {
+  const lookup = new Map()
+
+  liveApplicantContracts.value.forEach((record) => {
+    const applicationId = String(record?.applicationId || record?.application_id || '').trim()
+    if (!applicationId) return
+
+    const existingRecord = lookup.get(applicationId)
+    if (!existingRecord || getApplicantContractActivityTimestamp(record) >= getApplicantContractActivityTimestamp(existingRecord)) {
+      lookup.set(applicationId, record)
+    }
+  })
+
+  return lookup
+})
+
+const getApplicantLiveContractRecord = (record = {}) =>
+  latestApplicantContractByApplication.value.get(
+    String(record?.applicationId || record?.application_id || record?.id || '').trim(),
+  ) || null
+
+const normalizeApplicantContractStatus = (record = {}) =>
+  String(record?.status || record?.contractStatus || '').trim().toLowerCase()
+
+const getApplicantLiveJobOfferRecord = (record = {}) =>
+  latestApplicantJobOfferByApplication.value.get(
+    String(record?.applicationId || record?.application_id || record?.id || '').trim(),
+  ) || null
+
+const hydrateApplicantApplicationWithLiveJobOffer = (record = {}) => {
+  const liveOfferRecord = getApplicantLiveJobOfferRecord(record)
+  if (!liveOfferRecord) return record
+
+  return {
+    ...record,
+    jobOfferId: String(liveOfferRecord?.id || liveOfferRecord?.applicationId || '').trim() || record?.jobOfferId || record?.job_offer_id || '',
+    job_offer_id: String(liveOfferRecord?.id || liveOfferRecord?.applicationId || '').trim() || record?.job_offer_id || record?.jobOfferId || '',
+    jobOfferStatus: String(liveOfferRecord?.offerStatus || liveOfferRecord?.offer_status || '').trim() || record?.jobOfferStatus || record?.job_offer_status || '',
+    job_offer_status: String(liveOfferRecord?.offerStatus || liveOfferRecord?.offer_status || '').trim() || record?.job_offer_status || record?.jobOfferStatus || '',
+    jobOfferTitle: String(liveOfferRecord?.offerTitle || liveOfferRecord?.offer_title || '').trim() || record?.jobOfferTitle || record?.job_offer_title || '',
+    job_offer_title: String(liveOfferRecord?.offerTitle || liveOfferRecord?.offer_title || '').trim() || record?.job_offer_title || record?.jobOfferTitle || '',
+    jobOfferLetter: String(liveOfferRecord?.offerLetter || liveOfferRecord?.offer_letter || '').trim() || record?.jobOfferLetter || record?.job_offer_letter || '',
+    job_offer_letter: String(liveOfferRecord?.offerLetter || liveOfferRecord?.offer_letter || '').trim() || record?.job_offer_letter || record?.jobOfferLetter || '',
+    jobOfferCompensation: String(liveOfferRecord?.compensation || liveOfferRecord?.salary || liveOfferRecord?.salary_range || '').trim() || record?.jobOfferCompensation || record?.job_offer_compensation || '',
+    job_offer_compensation: String(liveOfferRecord?.compensation || liveOfferRecord?.salary || liveOfferRecord?.salary_range || '').trim() || record?.job_offer_compensation || record?.jobOfferCompensation || '',
+    jobOfferStartDate: String(liveOfferRecord?.startDate || liveOfferRecord?.start_date || '').trim() || record?.jobOfferStartDate || record?.job_offer_start_date || '',
+    job_offer_start_date: String(liveOfferRecord?.startDate || liveOfferRecord?.start_date || '').trim() || record?.job_offer_start_date || record?.jobOfferStartDate || '',
+    jobOfferResponseDeadline: String(liveOfferRecord?.responseDeadline || liveOfferRecord?.response_deadline || '').trim() || record?.jobOfferResponseDeadline || record?.job_offer_response_deadline || '',
+    job_offer_response_deadline: String(liveOfferRecord?.responseDeadline || liveOfferRecord?.response_deadline || '').trim() || record?.job_offer_response_deadline || record?.jobOfferResponseDeadline || '',
+    jobOfferInterviewType: String(liveOfferRecord?.interviewType || liveOfferRecord?.interview_type || '').trim() || record?.jobOfferInterviewType || record?.job_offer_interview_type || '',
+    job_offer_interview_type: String(liveOfferRecord?.interviewType || liveOfferRecord?.interview_type || '').trim() || record?.job_offer_interview_type || record?.jobOfferInterviewType || '',
+    jobOfferSentAt: String(liveOfferRecord?.sentAt || liveOfferRecord?.sent_at || '').trim() || record?.jobOfferSentAt || record?.job_offer_sent_at || '',
+    job_offer_sent_at: String(liveOfferRecord?.sentAt || liveOfferRecord?.sent_at || '').trim() || record?.job_offer_sent_at || record?.jobOfferSentAt || '',
+    jobOfferCreatedAt: String(liveOfferRecord?.createdAt || liveOfferRecord?.created_at || '').trim() || record?.jobOfferCreatedAt || record?.job_offer_created_at || '',
+    job_offer_created_at: String(liveOfferRecord?.createdAt || liveOfferRecord?.created_at || '').trim() || record?.job_offer_created_at || record?.jobOfferCreatedAt || '',
+    jobOfferUpdatedAt: String(liveOfferRecord?.updatedAt || liveOfferRecord?.updated_at || '').trim() || record?.jobOfferUpdatedAt || record?.job_offer_updated_at || '',
+    job_offer_updated_at: String(liveOfferRecord?.updatedAt || liveOfferRecord?.updated_at || '').trim() || record?.job_offer_updated_at || record?.jobOfferUpdatedAt || '',
+    jobOfferApplicantRespondedAt: String(liveOfferRecord?.applicantRespondedAt || liveOfferRecord?.applicant_responded_at || '').trim() || record?.jobOfferApplicantRespondedAt || record?.job_offer_applicant_responded_at || '',
+    job_offer_applicant_responded_at: String(liveOfferRecord?.applicantRespondedAt || liveOfferRecord?.applicant_responded_at || '').trim() || record?.job_offer_applicant_responded_at || record?.jobOfferApplicantRespondedAt || '',
+    jobOfferApplicantResponseNote: String(liveOfferRecord?.applicantResponseNote || liveOfferRecord?.applicant_response_note || '').trim() || record?.jobOfferApplicantResponseNote || record?.job_offer_applicant_response_note || '',
+    job_offer_applicant_response_note: String(liveOfferRecord?.applicantResponseNote || liveOfferRecord?.applicant_response_note || '').trim() || record?.job_offer_applicant_response_note || record?.jobOfferApplicantResponseNote || '',
+  }
+}
+
+const normalizeApplicantJobOfferStatus = (record = {}) => {
+  const normalizedRecord = hydrateApplicantApplicationWithLiveJobOffer(record)
+  return String(normalizedRecord?.jobOfferStatus || normalizedRecord?.job_offer_status || '').trim().toLowerCase()
+}
+
+const isApplicantJobOfferAcceptedStatus = (value = '') =>
+  ['accepted', 'confirmed', 'signed'].includes(String(value || '').trim().toLowerCase())
+
+const isApplicantJobOfferRejectedStatus = (value = '') =>
+  ['declined', 'rejected', 'cancelled', 'canceled', 'expired'].includes(String(value || '').trim().toLowerCase())
+
+const isApplicantJobOfferPendingStatus = (value = '') =>
+  ['sent', 'offered', 'pending'].includes(String(value || '').trim().toLowerCase())
+
+const deriveApplicantApplicationStatusFromJobOffer = (value = '') => {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  if (isApplicantJobOfferAcceptedStatus(normalizedValue)) return 'accepted'
+  if (isApplicantJobOfferRejectedStatus(normalizedValue)) return 'declined'
+  return ''
+}
+
+const formatApplicantJobOfferDateLabel = (value, fallback = 'Not set') => {
+  const parsedValue = Date.parse(String(value || '').trim())
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) return fallback
+
+  return new Date(parsedValue).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  })
+}
 
 const getApplicantJobOfferTimestamp = (record = {}) => {
+  const normalizedRecord = hydrateApplicantApplicationWithLiveJobOffer(record)
   const candidates = [
-    record?.jobOfferApplicantRespondedAt,
-    record?.job_offer_applicant_responded_at,
-    record?.jobOfferUpdatedAt,
-    record?.job_offer_updated_at,
-    record?.jobOfferSentAt,
-    record?.job_offer_sent_at,
-    record?.jobOfferCreatedAt,
-    record?.job_offer_created_at,
+    normalizedRecord?.jobOfferApplicantRespondedAt,
+    normalizedRecord?.job_offer_applicant_responded_at,
+    normalizedRecord?.jobOfferUpdatedAt,
+    normalizedRecord?.job_offer_updated_at,
+    normalizedRecord?.jobOfferSentAt,
+    normalizedRecord?.job_offer_sent_at,
+    normalizedRecord?.jobOfferCreatedAt,
+    normalizedRecord?.job_offer_created_at,
   ]
 
   for (const value of candidates) {
@@ -2977,12 +3190,13 @@ const getApplicantJobOfferTimestamp = (record = {}) => {
 }
 
 const getApplicantJobOfferState = (record = {}) => {
-  const company = getApplicationCompanyLabel(record)
-  const jobTitle = getApplicationJobTitle(record)
-  const applicationStatus = normalizeApplicationStatus(record)
-  const offerStatus = normalizeApplicantJobOfferStatus(record)
-  const responseNote = String(record?.jobOfferApplicantResponseNote || record?.job_offer_applicant_response_note || '').trim()
-  const updatedAtValue = getApplicantJobOfferTimestamp(record)
+  const normalizedRecord = hydrateApplicantApplicationWithLiveJobOffer(record)
+  const company = getApplicationCompanyLabel(normalizedRecord)
+  const jobTitle = getApplicationJobTitle(normalizedRecord)
+  const applicationStatus = normalizeApplicationStatus(normalizedRecord)
+  const offerStatus = normalizeApplicantJobOfferStatus(normalizedRecord)
+  const responseNote = String(normalizedRecord?.jobOfferApplicantResponseNote || normalizedRecord?.job_offer_applicant_response_note || '').trim()
+  const updatedAtValue = getApplicantJobOfferTimestamp(normalizedRecord)
 
   if (applicationStatus === 'hired') {
     return {
@@ -2993,7 +3207,7 @@ const getApplicantJobOfferState = (record = {}) => {
     }
   }
 
-  if (['accepted', 'confirmed', 'signed'].includes(offerStatus) || applicationStatus === 'accepted') {
+  if (isApplicantJobOfferAcceptedStatus(offerStatus) || applicationStatus === 'accepted') {
     return {
       label: 'Offer Accepted',
       tone: 'success',
@@ -3002,11 +3216,11 @@ const getApplicantJobOfferState = (record = {}) => {
     }
   }
 
-  if (['declined', 'rejected', 'cancelled', 'canceled', 'expired'].includes(offerStatus)) {
+  if (isApplicantJobOfferRejectedStatus(offerStatus)) {
     return {
-      label: 'Offer Closed',
+      label: 'Offer Rejected',
       tone: 'danger',
-      summary: responseNote || `${company} closed the job offer for ${jobTitle}.`,
+      summary: responseNote || `You rejected the job offer for ${jobTitle} from ${company}.`,
       updatedAtValue,
     }
   }
@@ -3124,6 +3338,7 @@ const applicantNotifications = computed(() => {
       let title = 'Job offer update'
       if (normalizedOfferLabel === 'offer sent') title = 'Job offer received'
       if (normalizedOfferLabel === 'offer accepted') title = 'Job offer accepted'
+      if (normalizedOfferLabel === 'offer rejected') title = 'Job offer rejected'
       if (normalizedOfferLabel === 'offer closed') title = 'Job offer closed'
       if (normalizedOfferLabel === 'hired') title = 'Hiring confirmed'
 
@@ -3356,63 +3571,403 @@ const applicantApplicationRecords = computed(() =>
 const applicantJobOfferRecords = computed(() =>
   visibleApplicantApplications.value
     .map((record) => {
-      const offerState = getApplicantJobOfferState(record)
+      const normalizedRecord = hydrateApplicantApplicationWithLiveJobOffer(record)
+      const offerState = getApplicantJobOfferState(normalizedRecord)
       if (!offerState) return null
 
-      const normalizedStatus = normalizeApplicationStatus(record)
-      const company = getApplicationCompanyLabel(record)
-      const title = getApplicationJobTitle(record)
+      const offerStatus = normalizeApplicantJobOfferStatus(normalizedRecord)
+      const normalizedStatus = normalizeApplicationStatus(normalizedRecord)
+      const company = getApplicationCompanyLabel(normalizedRecord)
+      const title = getApplicationJobTitle(normalizedRecord)
       const updatedAtValue = offerState.updatedAtValue
 
       return {
-        id: String(record?.id || `${title}-${company}-${updatedAtValue}`),
+        id: String(normalizedRecord?.id || `${title}-${company}-${updatedAtValue}`),
+        applicationId: String(normalizedRecord?.id || '').trim(),
+        offerId: String(normalizedRecord?.jobOfferId || normalizedRecord?.job_offer_id || normalizedRecord?.id || '').trim(),
         title,
         company,
-        logoUrl: getApplicationBusinessLogoUrl(record),
-        location: getApplicationLocationLabel(record),
-        jobType: getApplicationTypeLabel(record),
-        salaryLabel: getApplicationSalaryLabel(record),
-        disabilityLabel: getApplicationDisabilityLabel(record),
-        submittedAtLabel: formatApplicationDate(record),
+        logoUrl: getApplicationBusinessLogoUrl(normalizedRecord),
+        location: getApplicationLocationLabel(normalizedRecord),
+        jobType: getApplicationTypeLabel(normalizedRecord),
+        salaryLabel: getApplicationSalaryLabel(normalizedRecord),
+        compensationLabel: String(normalizedRecord?.jobOfferCompensation || normalizedRecord?.job_offer_compensation || getApplicationSalaryLabel(normalizedRecord)).trim() || 'Not specified',
+        disabilityLabel: getApplicationDisabilityLabel(normalizedRecord),
+        offerTitle: String(normalizedRecord?.jobOfferTitle || normalizedRecord?.job_offer_title || `${title} Job Offer`).trim() || `${title} Job Offer`,
+        offerLetter: String(normalizedRecord?.jobOfferLetter || normalizedRecord?.job_offer_letter || '').trim(),
+        startDateLabel: formatApplicantJobOfferDateLabel(normalizedRecord?.jobOfferStartDate || normalizedRecord?.job_offer_start_date),
+        responseDeadlineLabel: formatApplicantJobOfferDateLabel(normalizedRecord?.jobOfferResponseDeadline || normalizedRecord?.job_offer_response_deadline),
+        sentAtLabel: formatApplicantJobOfferDateLabel(normalizedRecord?.jobOfferSentAt || normalizedRecord?.job_offer_sent_at),
+        submittedAtLabel: formatApplicationDate(normalizedRecord),
         updatedAtLabel: updatedAtValue
           ? new Date(updatedAtValue).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' })
-          : formatApplicationStatusDate(record),
+          : formatApplicationStatusDate(normalizedRecord),
         updatedAtValue,
+        offerStatus,
         offerLabel: offerState.label,
         offerTone: offerState.tone,
         offerSummary: offerState.summary,
+        responseNote: String(normalizedRecord?.jobOfferApplicantResponseNote || normalizedRecord?.job_offer_applicant_response_note || '').trim(),
+        canRespond: isApplicantJobOfferPendingStatus(offerStatus) && normalizedStatus !== 'hired',
       }
     })
-    .filter(Boolean)
+    .filter((record) => Boolean(record && record.canRespond))
     .sort((left, right) => (right.updatedAtValue || 0) - (left.updatedAtValue || 0)),
 )
 
-const applicantContractRecords = computed(() => [])
+const activeApplicantJobOfferActionId = ref('')
 
-const selectApplicantContract = (contractId) => {
-  activeApplicantContractId.value = String(contractId || '').trim()
-  applicantContractConsentChecked.value = false
+const getApplicantJobOfferApplicationById = (applicationId) => {
+  const matchedRecord = visibleApplicantApplications.value.find((record) =>
+    String(record?.id || '').trim() === String(applicationId || '').trim())
+    || liveApplicantApplications.value.find((record) =>
+      String(record?.id || '').trim() === String(applicationId || '').trim())
+    || null
+
+  return matchedRecord ? hydrateApplicantApplicationWithLiveJobOffer(matchedRecord) : null
 }
 
-const signApplicantContract = async ({ contractId } = {}) => {
-  const normalizedContractId = String(contractId || '').trim()
-  if (!normalizedContractId || activeApplicantContractSubmittingId.value) return
+const buildApplicantJobOfferWritePayload = (record = {}, overrides = {}) => ({
+  id: String(record?.jobOfferId || record?.job_offer_id || record?.id || '').trim(),
+  applicationId: String(record?.id || '').trim(),
+  workspaceOwnerId: String(record?.workspaceOwnerId || record?.workspace_owner_id || '').trim(),
+  workspaceOwnerName: String(
+    record?.workspaceOwnerName
+    || record?.workspace_owner_name
+    || record?.businessName
+    || record?.business_name
+    || record?.companyName
+    || record?.company_name
+    || '',
+  ).trim(),
+  workspaceOwnerEmail: String(record?.workspaceOwnerEmail || record?.workspace_owner_email || '').trim().toLowerCase(),
+  applicantId: String(record?.applicantId || record?.applicant_id || authUser.value?.id || '').trim(),
+  applicantName: String(record?.applicantName || record?.applicant_name || authUser.value?.name || 'Applicant').trim() || 'Applicant',
+  applicantEmail: String(record?.applicantEmail || record?.applicant_email || authUser.value?.email || '').trim().toLowerCase(),
+  applicantAvatar: String(record?.applicantAvatar || record?.applicant_avatar || authUser.value?.avatar || '').trim(),
+  jobId: String(record?.jobId || record?.job_id || '').trim(),
+  jobTitle: getApplicationJobTitle(record),
+  interviewType: String(
+    record?.jobOfferInterviewType
+    || record?.job_offer_interview_type
+    || record?.interviewType
+    || record?.interview_type
+    || 'interview',
+  ).trim() || 'interview',
+  offerTitle: String(record?.jobOfferTitle || record?.job_offer_title || `${getApplicationJobTitle(record)} Job Offer`).trim(),
+  offerLetter: String(record?.jobOfferLetter || record?.job_offer_letter || '').trim(),
+  compensation: String(record?.jobOfferCompensation || record?.job_offer_compensation || record?.salaryRange || record?.salary_range || '').trim(),
+  startDate: String(record?.jobOfferStartDate || record?.job_offer_start_date || '').trim(),
+  responseDeadline: String(record?.jobOfferResponseDeadline || record?.job_offer_response_deadline || '').trim(),
+  offerStatus: normalizeApplicantJobOfferStatus(record) || 'sent',
+  applicantResponseNote: String(record?.jobOfferApplicantResponseNote || record?.job_offer_applicant_response_note || '').trim(),
+  applicantRespondedAt: String(record?.jobOfferApplicantRespondedAt || record?.job_offer_applicant_responded_at || '').trim(),
+  sentAt: String(record?.jobOfferSentAt || record?.job_offer_sent_at || '').trim(),
+  createdAt: String(record?.jobOfferCreatedAt || record?.job_offer_created_at || record?.createdAt || record?.created_at || '').trim(),
+  updatedAt: String(record?.jobOfferUpdatedAt || record?.job_offer_updated_at || record?.updatedAt || record?.updated_at || '').trim(),
+  ...overrides,
+})
 
-  activeApplicantContractSubmittingId.value = normalizedContractId
+const buildApplicantJobOfferApplicationPayload = (record = {}, overrides = {}) => ({
+  status: deriveApplicantApplicationStatusFromJobOffer(
+    Object.prototype.hasOwnProperty.call(overrides, 'jobOfferStatus')
+      ? overrides.jobOfferStatus
+      : record?.jobOfferStatus || record?.job_offer_status,
+  ),
+  jobOfferId: String(record?.jobOfferId || record?.job_offer_id || record?.id || '').trim(),
+  jobOfferStatus: String(record?.jobOfferStatus || record?.job_offer_status || '').trim(),
+  jobOfferTitle: String(record?.jobOfferTitle || record?.job_offer_title || `${getApplicationJobTitle(record)} Job Offer`).trim(),
+  jobOfferLetter: String(record?.jobOfferLetter || record?.job_offer_letter || '').trim(),
+  jobOfferCompensation: String(record?.jobOfferCompensation || record?.job_offer_compensation || record?.salaryRange || record?.salary_range || '').trim(),
+  jobOfferStartDate: String(record?.jobOfferStartDate || record?.job_offer_start_date || '').trim(),
+  jobOfferResponseDeadline: String(record?.jobOfferResponseDeadline || record?.job_offer_response_deadline || '').trim(),
+  jobOfferInterviewType: String(
+    record?.jobOfferInterviewType
+    || record?.job_offer_interview_type
+    || record?.interviewType
+    || record?.interview_type
+    || 'interview',
+  ).trim() || 'interview',
+  jobOfferSentAt: String(record?.jobOfferSentAt || record?.job_offer_sent_at || '').trim(),
+  jobOfferCreatedAt: String(record?.jobOfferCreatedAt || record?.job_offer_created_at || record?.createdAt || record?.created_at || '').trim(),
+  jobOfferUpdatedAt: String(record?.jobOfferUpdatedAt || record?.job_offer_updated_at || record?.updatedAt || record?.updated_at || '').trim(),
+  jobOfferApplicantRespondedAt: String(record?.jobOfferApplicantRespondedAt || record?.job_offer_applicant_responded_at || '').trim(),
+  jobOfferApplicantResponseNote: String(record?.jobOfferApplicantResponseNote || record?.job_offer_applicant_response_note || '').trim(),
+  ...overrides,
+})
+
+const applyOptimisticApplicantJobOfferResponse = (applicationId, payload = {}) => {
+  const normalizedApplicationId = String(applicationId || '').trim()
+  if (!normalizedApplicationId) return
+
+  liveApplicantApplications.value = liveApplicantApplications.value.map((record) => {
+    if (String(record?.id || '').trim() !== normalizedApplicationId) return record
+
+    return {
+      ...record,
+      ...(Object.prototype.hasOwnProperty.call(payload, 'status') && payload.status
+        ? { status: payload.status, application_status: payload.status }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload, 'jobOfferStatus')
+        ? { jobOfferStatus: payload.jobOfferStatus, job_offer_status: payload.jobOfferStatus }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload, 'jobOfferApplicantResponseNote')
+        ? {
+          jobOfferApplicantResponseNote: payload.jobOfferApplicantResponseNote,
+          job_offer_applicant_response_note: payload.jobOfferApplicantResponseNote,
+        }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload, 'jobOfferApplicantRespondedAt')
+        ? {
+          jobOfferApplicantRespondedAt: payload.jobOfferApplicantRespondedAt,
+          job_offer_applicant_responded_at: payload.jobOfferApplicantRespondedAt,
+        }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(payload, 'jobOfferUpdatedAt')
+        ? {
+          jobOfferUpdatedAt: payload.jobOfferUpdatedAt,
+          job_offer_updated_at: payload.jobOfferUpdatedAt,
+          updatedAt: payload.jobOfferUpdatedAt,
+          updated_at: payload.jobOfferUpdatedAt,
+          statusUpdatedAt: payload.jobOfferUpdatedAt,
+          status_updated_at: payload.jobOfferUpdatedAt,
+        }
+        : {}),
+    }
+  })
+}
+
+const submitApplicantJobOfferResponse = async (applicationId, nextOfferStatus, responseNote = '') => {
+  const normalizedApplicationId = String(applicationId || '').trim()
+  const normalizedOfferStatus = String(nextOfferStatus || '').trim().toLowerCase()
+  if (!normalizedApplicationId || !normalizedOfferStatus || activeApplicantJobOfferActionId.value) return
+
+  const targetRecord = getApplicantJobOfferApplicationById(normalizedApplicationId)
+  if (!targetRecord) {
+    notify('That job offer could not be found anymore.', 'error', 'Offer not found')
+    return
+  }
+
+  activeApplicantJobOfferActionId.value = normalizedApplicationId
+
+  const respondedAt = new Date().toISOString()
+  const normalizedReason = String(responseNote || '').trim()
+  const nextWritePayload = buildApplicantJobOfferWritePayload(targetRecord, {
+    offerStatus: normalizedOfferStatus,
+    applicantResponseNote: normalizedReason,
+    applicantRespondedAt: respondedAt,
+    updatedAt: respondedAt,
+  })
+  const nextApplicationPayload = buildApplicantJobOfferApplicationPayload(targetRecord, {
+    status: deriveApplicantApplicationStatusFromJobOffer(normalizedOfferStatus),
+    jobOfferStatus: normalizedOfferStatus,
+    jobOfferApplicantResponseNote: normalizedReason,
+    jobOfferApplicantRespondedAt: respondedAt,
+    jobOfferUpdatedAt: respondedAt,
+  })
+
   try {
-    notify('Pilot merge preview only: the applicant contract signing layout is ready for UI review on this branch.', 'success', 'Contract preview')
+    const hasOfferWriteRequirements = Boolean(
+      nextWritePayload.id
+      && nextWritePayload.applicationId
+      && nextWritePayload.workspaceOwnerId
+      && nextWritePayload.applicantId
+      && nextWritePayload.jobId,
+    )
+    let didPersistViaJobOfferRecord = false
+
+    if (hasOfferWriteRequirements) {
+      try {
+        await saveJobOfferRecord(nextWritePayload)
+        didPersistViaJobOfferRecord = true
+      } catch (error) {
+        console.warn('[applicant-job-offers] Unable to update the job offer record directly.', error)
+      }
+    }
+
+    if (!didPersistViaJobOfferRecord) {
+      await updateApplicantJobApplicationStatus(normalizedApplicationId, nextApplicationPayload)
+    }
+
+    applyOptimisticApplicantJobOfferResponse(normalizedApplicationId, nextApplicationPayload)
+
+    if (normalizedOfferStatus === 'accepted') {
+      notify(
+        `You accepted the ${getApplicationJobTitle(targetRecord)} job offer. Training is the next pending step.`,
+        'success',
+        'Job offer accepted',
+      )
+    } else {
+      notify(
+        `You rejected the ${getApplicationJobTitle(targetRecord)} job offer.${normalizedReason ? ` Reason saved: ${normalizedReason}` : ''}`,
+        'success',
+        'Job offer rejected',
+      )
+    }
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Unable to update this job offer right now.', 'error')
   } finally {
+    activeApplicantJobOfferActionId.value = ''
+  }
+}
+
+const approveApplicantJobOffer = async ({ applicationId } = {}) => {
+  await submitApplicantJobOfferResponse(applicationId, 'accepted')
+}
+
+const rejectApplicantJobOffer = async ({ applicationId, reason } = {}) => {
+  const normalizedReason = String(reason || '').trim()
+  if (!normalizedReason) {
+    notify('Please enter a reason before rejecting this job offer.', 'warning', 'Reason required')
+    return
+  }
+
+  await submitApplicantJobOfferResponse(applicationId, 'declined', normalizedReason)
+}
+
+const formatApplicantContractStatusLabel = (value) => {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  if (normalizedValue === 'completed') return 'Completed'
+  if (normalizedValue === 'applicant_signed') return 'Signed by You'
+  if (normalizedValue === 'sent') return 'Waiting for Signature'
+  return 'In Progress'
+}
+
+const formatApplicantContractStatusTone = (value) => {
+  const normalizedValue = String(value || '').trim().toLowerCase()
+  if (normalizedValue === 'completed') return 'success'
+  if (normalizedValue === 'applicant_signed') return 'info'
+  if (normalizedValue === 'sent') return 'warning'
+  return 'muted'
+}
+
+const formatApplicantContractDate = (value) => {
+  const parsedValue = Date.parse(String(value || '').trim())
+  if (!parsedValue) return ''
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  }).format(parsedValue)
+}
+
+const applicantContractRecords = computed(() =>
+  liveApplicantContracts.value.map((record) => ({
+    ...record,
+    statusLabel: formatApplicantContractStatusLabel(record?.status),
+    statusTone: formatApplicantContractStatusTone(record?.status),
+    sentAtLabel: formatApplicantContractDate(record?.sentAt),
+    applicantSignedAtLabel: formatApplicantContractDate(record?.applicantSignedAt),
+    businessSignedAtLabel: formatApplicantContractDate(record?.businessSignedAt),
+  })),
+)
+
+const selectApplicantContract = async (contractId) => {
+  const normalizedContractId = String(contractId || '').trim()
+  if (!normalizedContractId) return
+
+  activeApplicantContractId.value = normalizedContractId
+  if (activeApplicantContractSubmittingId.value !== normalizedContractId) {
+    activeApplicantContractSubmittingId.value = ''
+  }
+  applicantContractConsentChecked.value = false
+
+  const matchedContract = applicantContractRecords.value.find((record) => String(record?.id || '').trim() === normalizedContractId) || null
+  if (!matchedContract || matchedContract.applicantViewedAt) return
+
+  try {
+    await markApplicantContractViewed(normalizedContractId)
+  } catch (error) {
+    console.warn('[applicant-contracts] Unable to mark contract as viewed.', error)
+  }
+}
+
+const signApplicantContract = async ({ contractId, signatureDataUrl } = {}) => {
+  const normalizedContractId = String(contractId || '').trim()
+  if (!normalizedContractId) return
+  if (isApplicantContractSubmitting.value) return
+
+  try {
+    isApplicantContractSubmitting.value = true
+    activeApplicantContractSubmittingId.value = normalizedContractId
+    await signApplicantContractRecord(normalizedContractId, {
+      applicantSignatureName: applicantContractSignatureName.value,
+      applicantSignatureDataUrl: signatureDataUrl,
+      applicantConsentAccepted: applicantContractConsentChecked.value,
+    })
+    applicantContractConsentChecked.value = false
+    notify('Your signed contract was sent back to the business successfully.', 'success', 'Contract submitted')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Unable to sign this contract right now.', 'error')
+  } finally {
+    isApplicantContractSubmitting.value = false
     activeApplicantContractSubmittingId.value = ''
   }
 }
 
-const openApplicantContractProviderPreview = () => {
-  notify('Pilot merge preview only: provider-based contract signing will be wired after you approve this merge layout.', 'warning', 'Preview branch')
+const openApplicantContractDigitalApiSigning = async (contractId) => {
+  const normalizedContractId = String(contractId || '').trim()
+  if (!normalizedContractId || activeApplicantProviderContractId.value) return
+
+  try {
+    activeApplicantProviderContractId.value = normalizedContractId
+    const session = await createContractSigningProviderSession({
+      contractId: normalizedContractId,
+      actorRole: 'applicant',
+      returnUrl: typeof window !== 'undefined' ? window.location.href : '',
+    })
+    const signingUrl = String(session?.signingUrl || '').trim()
+
+    if (!signingUrl) {
+      throw new Error('No digital signing URL was returned by the provider.')
+    }
+
+    if (typeof window !== 'undefined') {
+      window.open(signingUrl, '_blank', 'noopener,noreferrer')
+    }
+
+    notify('Digital signing page opened in a new tab. Finish signing there, then refresh the API status here.', 'success', 'Digital API opened')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Unable to open the digital signing API right now.', 'error')
+  } finally {
+    activeApplicantProviderContractId.value = ''
+  }
 }
 
-const refreshApplicantContractProviderPreview = () => {
-  notify('Pilot merge preview refreshed. This branch currently focuses on merged UI layout before the full live contract wiring.', 'warning', 'Preview branch')
+const refreshApplicantContractDigitalApiStatus = async (contractId) => {
+  const normalizedContractId = String(contractId || '').trim()
+  if (!normalizedContractId || activeApplicantProviderContractId.value) return
+
+  try {
+    activeApplicantProviderContractId.value = normalizedContractId
+    await syncContractSigningProviderStatus(normalizedContractId)
+    notify('Digital signing status refreshed from the provider.', 'success', 'Contract synced')
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'Unable to refresh the provider status right now.', 'error')
+  } finally {
+    activeApplicantProviderContractId.value = ''
+  }
 }
+
+watch(applicantContractRecords, (records) => {
+  const activeId = String(activeApplicantContractId.value || '').trim()
+  if (records.some((record) => String(record?.id || '').trim() === activeId)) return
+
+  activeApplicantContractId.value = String(records[0]?.id || '').trim()
+}, { immediate: true })
+
+watch(applicantContractRecords, (records) => {
+  const submittingId = String(activeApplicantContractSubmittingId.value || '').trim()
+  if (!submittingId) return
+
+  const submittingRecord = records.find((record) => String(record?.id || '').trim() === submittingId) || null
+  const normalizedStatus = String(submittingRecord?.status || '').trim().toLowerCase()
+
+  if (!submittingRecord || normalizedStatus !== 'sent') {
+    activeApplicantContractSubmittingId.value = ''
+  }
+})
 
 watch(visibleApplicantApplications, (records) => {
   applicantApplicationStats.value = summarizeApplicantApplications(records)
@@ -3458,7 +4013,7 @@ const buildApplicantInterviewApplicationPayload = (interviewRecord = {}, overrid
   status: 'interview',
   interviewSchedule: String(overrides.interviewSchedule ?? interviewRecord?.scheduledAt ?? '').trim(),
   interviewDate: String(overrides.interviewDate ?? interviewRecord?.scheduledAt ?? '').trim(),
-  interviewType: String(overrides.interviewType ?? interviewRecord?.interviewType ?? interviewRecord?.interview_type ?? 'initial').trim() || 'initial',
+  interviewType: String(overrides.interviewType ?? interviewRecord?.interviewType ?? interviewRecord?.interview_type ?? 'interview').trim() || 'interview',
   interviewer: String(overrides.interviewer ?? interviewRecord?.interviewer ?? '').trim(),
   interviewMode: String(overrides.interviewMode ?? interviewRecord?.mode ?? '').trim(),
   interviewLocationOrLink: String(overrides.interviewLocationOrLink ?? interviewRecord?.locationOrLink ?? '').trim(),
@@ -3485,12 +4040,13 @@ const resolveApplicantInterviewActionRecord = (payload = {}) => {
     : null
   const applicationId = directApplicationId || String(linkedPageRecord?.applicationId || '').trim()
   const interviewType = directInterviewType || String(linkedPageRecord?.interviewType || '').trim().toLowerCase()
+  const normalizedInterviewType = interviewType ? 'interview' : ''
 
   const directRecord = directInterviewId ? getLiveApplicantInterviewById(directInterviewId) : null
   if (directRecord?.id && directRecord?.applicationId) return directRecord
 
-  if (applicationId && interviewType) {
-    const byApplicationAndType = latestApplicantInterviewByApplicationAndType.value.get(`${applicationId}:${interviewType}`) || null
+  if (applicationId && normalizedInterviewType) {
+    const byApplicationAndType = latestApplicantInterviewByApplicationAndType.value.get(`${applicationId}:${normalizedInterviewType}`) || null
     if (byApplicationAndType?.id && byApplicationAndType?.applicationId) return byApplicationAndType
   }
 
@@ -3794,9 +4350,11 @@ const startApplicantInterviewSchedulesSubscription = (user = authUser.value) => 
 const startApplicantRealtimeSubscriptions = (user) => {
   stopPublicJobsSubscription?.()
   stopApplicantApplicationsSubscription?.()
+  stopApplicantJobOffersSubscription?.()
   stopApplicantInterviewSchedulesSubscription?.()
   stopApplicantAssessmentAssignmentsSubscription?.()
   stopApplicantTrainingAssignmentsSubscription?.()
+  stopApplicantContractsSubscription?.()
   const loadingCycleId = beginApplicantJobsLoading()
   void loadApplicantJobs()
 
@@ -3832,6 +4390,19 @@ const startApplicantRealtimeSubscriptions = (user) => {
     },
   )
 
+  stopApplicantJobOffersSubscription = subscribeToApplicantJobOffers(
+    {
+      applicantId: String(user?.id || user?.uid || '').trim(),
+      applicantEmail: String(user?.email || '').trim().toLowerCase(),
+    },
+    (records) => {
+      liveApplicantJobOffers.value = Array.isArray(records) ? records : []
+    },
+    () => {
+      liveApplicantJobOffers.value = []
+    },
+  )
+
   startApplicantInterviewSchedulesSubscription(user)
 
   stopApplicantAssessmentAssignmentsSubscription = subscribeToApplicantAssessmentAssignments(
@@ -3857,6 +4428,20 @@ const startApplicantRealtimeSubscriptions = (user) => {
     },
     () => {
       liveApplicantTrainingAssignments.value = []
+    },
+  )
+
+  stopApplicantContractsSubscription = subscribeToApplicantContracts(
+    {
+      applicantId: String(user?.id || user?.uid || '').trim(),
+      applicantEmail: String(user?.email || '').trim().toLowerCase(),
+      applicationIds: liveApplicantApplications.value.map((record) => String(record?.id || '').trim()).filter(Boolean),
+    },
+    (records) => {
+      liveApplicantContracts.value = Array.isArray(records) ? records : []
+    },
+    () => {
+      liveApplicantContracts.value = []
     },
   )
 }
@@ -4564,9 +5149,11 @@ onBeforeUnmount(() => {
   stopAuthUserProfileSync?.()
   stopPublicJobsSubscription?.()
   stopApplicantApplicationsSubscription?.()
+  stopApplicantJobOffersSubscription?.()
   stopApplicantInterviewSchedulesSubscription?.()
   stopApplicantAssessmentAssignmentsSubscription?.()
   stopApplicantTrainingAssignmentsSubscription?.()
+  stopApplicantContractsSubscription?.()
   stopApplicantJobDocumentStatesSubscription?.()
 })
 </script>
@@ -4898,6 +5485,7 @@ onBeforeUnmount(() => {
         :show-menu-button="isApplicantMobileViewport"
         :is-sidebar-open="isApplicantMobileSidebarOpen"
         :notifications="applicantNotifications"
+        :compact="applicantRenderedSection === 'job-offers'"
         @open-notification="handleApplicantNotificationOpen"
         @open-personalization="openPersonalization"
         @open-settings="openApplicantSettings"
@@ -5166,6 +5754,10 @@ onBeforeUnmount(() => {
           <ApplicantJobOffers
             v-else-if="applicantRenderedSection === 'job-offers'"
             :offer-records="applicantJobOfferRecords"
+            :active-offer-action-id="activeApplicantJobOfferActionId"
+            :is-offer-action-submitting="Boolean(activeApplicantJobOfferActionId)"
+            @approve-offer="approveApplicantJobOffer"
+            @reject-offer="rejectApplicantJobOffer"
           />
 
           <ApplicantContracts
@@ -5174,14 +5766,14 @@ onBeforeUnmount(() => {
             :active-contract-id="activeApplicantContractId"
             :applicant-signature-name="applicantContractSignatureName"
             :applicant-consent-checked="applicantContractConsentChecked"
-            :active-submitting-contract-id="activeApplicantContractSubmittingId"
-            :active-provider-contract-id="''"
+            :active-submitting-contract-id="isApplicantContractSubmitting ? activeApplicantContractSubmittingId : ''"
+            :active-provider-contract-id="activeApplicantProviderContractId"
             @select-contract="selectApplicantContract"
             @update:applicant-signature-name="applicantContractSignatureName = $event"
             @update:applicant-consent-checked="applicantContractConsentChecked = $event"
             @sign-contract="signApplicantContract"
-            @open-provider-sign="openApplicantContractProviderPreview"
-            @refresh-provider-status="refreshApplicantContractProviderPreview"
+            @open-provider-sign="openApplicantContractDigitalApiSigning"
+            @refresh-provider-status="refreshApplicantContractDigitalApiStatus"
           />
 
           <div v-else class="applicant-placeholder__card">

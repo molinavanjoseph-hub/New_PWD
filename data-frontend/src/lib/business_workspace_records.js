@@ -170,6 +170,7 @@ export const normalizeBusinessTrainingTemplateRecord = (record = {}) => {
   const updatedAt = timestampText(record.updatedAt || record.updated_at || record.updated_at_server)
   const title = text(record.title)
   const description = text(record.description)
+  const passingScorePercent = normalizePercent(record.passingScorePercent || record.passing_score_percent, 70)
   const legacyQuestions = Array.isArray(record.questions) ? cloneJson(record.questions, []) : []
   const categories = Array.isArray(record.categories)
     ? cloneJson(record.categories, [])
@@ -201,6 +202,7 @@ export const normalizeBusinessTrainingTemplateRecord = (record = {}) => {
     workspaceOwnerId,
     title,
     description,
+    passingScorePercent,
     categories,
     createdAt,
     updatedAt,
@@ -209,6 +211,7 @@ export const normalizeBusinessTrainingTemplateRecord = (record = {}) => {
       workspace_owner_id: workspaceOwnerId,
       title,
       description,
+      passing_score_percent: passingScorePercent,
       categories,
       created_at: createdAt || new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -665,3 +668,6 @@ export const saveBusinessTrainingAssignmentRecord = async (record = {}) =>
     record,
     normalizeBusinessTrainingAssignmentRecord,
   )
+
+export const deleteBusinessTrainingAssignmentRecord = async (documentId) =>
+  deleteWorkspaceRecord(BUSINESS_TRAINING_ASSIGNMENT_COLLECTION, documentId)

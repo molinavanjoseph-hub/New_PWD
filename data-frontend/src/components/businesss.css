@@ -3204,6 +3204,161 @@
   display: none;
 }
 
+.business-job-post__selection-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.business-job-post__selection-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid rgba(121, 178, 147, 0.28);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #f7fcf9 0%, #ebf6ef 100%);
+  color: #1d6b4f;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.business-job-post__modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(12, 23, 18, 0.46);
+  backdrop-filter: blur(10px);
+}
+
+.business-job-post__modal {
+  width: min(100%, 42rem);
+  max-height: min(88vh, 44rem);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(121, 178, 147, 0.24);
+  border-radius: 1.35rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(245, 250, 247, 0.98) 100%);
+  box-shadow: 0 28px 60px rgba(12, 30, 20, 0.24);
+}
+
+.business-job-post__modal-head,
+.business-job-post__modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.2rem;
+}
+
+.business-job-post__modal-head {
+  border-bottom: 1px solid rgba(214, 227, 219, 0.92);
+}
+
+.business-job-post__modal-head strong {
+  color: #173828;
+  font-size: 1rem;
+}
+
+.business-job-post__modal-close {
+  width: 2.4rem;
+  height: 2.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(121, 178, 147, 0.24);
+  border-radius: 0.85rem;
+  background: #ffffff;
+  color: #315043;
+  cursor: pointer;
+  transition: border-color 180ms ease, color 180ms ease, background-color 180ms ease;
+}
+
+.business-job-post__modal-close:hover,
+.business-job-post__modal-close:focus-visible {
+  border-color: #79b293;
+  color: #1d6b4f;
+  background: #f3faf5;
+  outline: none;
+}
+
+.business-job-post__modal-body {
+  display: grid;
+  gap: 0.95rem;
+  padding: 1.2rem;
+  overflow-y: auto;
+}
+
+.business-job-post__modal-copy {
+  margin: 0;
+  color: #587162;
+  line-height: 1.6;
+}
+
+.business-job-post__checklist {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.business-job-post__check-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.88rem 0.95rem;
+  border: 1px solid #d9e7de;
+  border-radius: 1rem;
+  background: #ffffff;
+  color: #274637;
+  cursor: pointer;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.business-job-post__check-option:hover {
+  border-color: #9fbfae;
+  background: #f5fbf7;
+}
+
+.business-job-post__check-option.is-active {
+  border-color: #79b293;
+  background: linear-gradient(180deg, #f3fbf6 0%, #e9f5ee 100%);
+  box-shadow: inset 0 0 0 1px rgba(46, 154, 98, 0.08);
+}
+
+.business-job-post__check-option input {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  accent-color: #1f6f46;
+}
+
+.business-job-post__check-option span {
+  font-weight: 700;
+}
+
+.business-job-post__modal-foot {
+  border-top: 1px solid rgba(214, 227, 219, 0.92);
+}
+
+.business-job-post__modal-selection-count {
+  color: #587162;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.business-job-post__modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.7rem;
+}
+
 .business-job-post__field textarea {
   min-height: 132px;
   line-height: 1.55;
@@ -5605,6 +5760,74 @@
   gap: 0.75rem;
 }
 
+.business-applicants-modal__resume {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid rgba(221, 231, 225, 0.92);
+  border-radius: 1rem;
+  background: rgba(249, 252, 250, 0.98);
+}
+
+.business-applicants-modal__resume-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.business-applicants-modal__resume-head span,
+.business-applicants-modal__resume--empty span {
+  color: #5f7568;
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.business-applicants-modal__resume-head strong,
+.business-applicants-modal__resume--empty strong {
+  display: block;
+  margin-top: 0.22rem;
+  color: #172033;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.business-applicants-modal__resume-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.72rem 1rem;
+  border: 1px solid rgba(28, 104, 69, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #1d6a45;
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.business-applicants-modal__resume-link:hover {
+  background: rgba(232, 244, 237, 0.98);
+}
+
+.business-applicants-modal__resume-frame {
+  width: 100%;
+  min-height: 34rem;
+  border: 1px solid rgba(213, 226, 219, 0.92);
+  border-radius: 0.9rem;
+  background: #ffffff;
+}
+
+.business-applicants-modal__resume--empty p {
+  margin: 0;
+  color: #5f7568;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
 .business-applicants-modal__item {
   display: grid;
   gap: 0.32rem;
@@ -5680,6 +5903,10 @@
   .business-applicants-modal__identity {
     grid-template-columns: 1fr;
     justify-items: start;
+  }
+
+  .business-applicants-modal__resume-frame {
+    min-height: 24rem;
   }
 }
 
@@ -7869,11 +8096,29 @@
   background: #ffffff;
 }
 
+.business-assign-templates__tracking-category.is-selected {
+  border-color: #9fd1b2;
+  box-shadow: 0 0 0 3px rgba(57, 160, 102, 0.1);
+}
+
 .business-assign-templates__tracking-category-head {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 0.75rem;
+}
+
+.business-assign-templates__tracking-category-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.business-assign-templates__tracking-category-toggle.is-selected strong {
+  color: #14532d;
 }
 
 .business-assign-templates__tracking-category-head strong {
@@ -7913,12 +8158,18 @@
   border: 1px solid #e5e7eb;
   border-radius: 14px;
   background: #fbfcfb;
+  cursor: pointer;
   transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
 
 .business-assign-templates__tracking-skill.is-complete {
   border-color: #b9e3c8;
   background: #f3fbf6;
+}
+
+.business-assign-templates__tracking-skill.is-selected {
+  border-color: #8dc4a3;
+  box-shadow: 0 0 0 3px rgba(57, 160, 102, 0.12);
 }
 
 .business-assign-templates__tracking-skill-check {
@@ -12100,5 +12351,26 @@
 
   .business-dashboard-analytics__trend-labels {
     font-size: 0.66rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .business-job-post__modal-backdrop {
+    padding: 0.85rem;
+  }
+
+  .business-job-post__modal-head,
+  .business-job-post__modal-foot {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .business-job-post__modal-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .business-job-post__modal-actions .business-job-post__button {
+    width: 100%;
   }
 }

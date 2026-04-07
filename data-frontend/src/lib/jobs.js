@@ -622,6 +622,26 @@ export const createBusinessJobPost = async (payload = {}) => {
     jobDocument.employer_id,
   ])
 
+  if (canUseDirectFallback) {
+    try {
+      return await createBusinessJobPostDirectly(jobDocument)
+    } catch (firestoreError) {
+      const firestoreCode = text(firestoreError?.code).toLowerCase()
+      const shouldFallbackToFunction = [
+        'permission-denied',
+        'firestore/permission-denied',
+        'unauthenticated',
+        'unavailable',
+      ].includes(firestoreCode)
+
+      if (!shouldFallbackToFunction) {
+        throw new Error(
+          toJobsErrorMessage(firestoreError, 'Unable to publish the job post right now.'),
+        )
+      }
+    }
+  }
+
   try {
     const createdJob = await createBusinessJobPostViaFunction(jobDocument)
 
